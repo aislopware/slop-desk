@@ -108,6 +108,7 @@ typedef struct {
   uint8_t momentum_phase;
   bool continuous;
   bool down;
+  bool autorepeat;
   uint8_t text_offset;
 } SlopDeskInputEvent;
 

@@ -94,6 +94,9 @@ pub struct ScrollPost {
     /// Whether to replay the two phase fields at all. False restores the phase-less behaviour that
     /// predates gesture forwarding, which exists only as an A/B.
     pub phased: bool,
+    /// The wire's modifier bits, set on the event itself so a ⌘-wheel zoom from a client that never
+    /// sent a ⌘ key edge still lands as one.
+    pub modifiers: u8,
     /// The self-inject stamp, as [`PointerPost::tag`].
     pub tag: u32,
     /// The loopback seam, as [`PointerPost::to_pid`].
@@ -317,6 +320,7 @@ pub fn post_scroll(spec: &ScrollPost) -> bool {
         } else {
             CGEvent::set_integer_value_field(Some(&event), CGEventField::ScrollWheelEventIsContinuous, 1);
         }
+        CGEvent::set_flags(Some(&event), cg_flags(spec.modifiers));
         stamp_and_post(&event, spec.tag, spec.to_pid);
         true
     })
@@ -327,12 +331,19 @@ pub fn post_scroll(spec: &ScrollPost) -> bool {
 /// A posted `CGEvent` key reaches even a `SecurityAgent` secure field: Secure Event Input blocks
 /// event-tap INTERCEPTION, not trusted HID-tap injection, which is why no virtual-HID driver is
 /// needed to type a password into a host dialog.
+///
+/// `repeat` marks a held-key autorepeat the way the client's own event was marked, so a target
+/// that treats repeats differently from fresh presses — a game, a terminal's key-repeat filter, an
+/// editor's `isARepeat` check — sees what the user's keyboard produced.
 #[must_use]
-pub fn post_key(key_code: u16, down: bool, modifiers: u8) -> bool {
+pub fn post_key(key_code: u16, down: bool, repeat: bool, modifiers: u8) -> bool {
     with_source(|source| {
         let Some(event) = CGEvent::new_keyboard_event(Some(source), key_code, down) else {
             return false;
         };
+        if repeat {
+            CGEvent::set_integer_value_field(Some(&event), CGEventField::KeyboardEventAutorepeat, 1);
+        }
         CGEvent::set_flags(Some(&event), cg_flags(modifiers));
         post_keyboard(&event);
         true

@@ -128,6 +128,9 @@ pub struct StaticIdrDecider {
     /// The quiet window in seconds: suppress a synthetic re-encode when a REAL frame was encoded
     /// within it, so the timer never double-emits over a live screen.
     quiet_window: f64,
+    /// The quiet window a FORCED re-encode waits out, in seconds — how long after the last real
+    /// frame a pending recovery request is left to the live path before the timer serves it.
+    forced_quiet: f64,
     /// When the last REAL frame was encoded. Zero means none yet.
     last_complete_encode: f64,
     /// When the last SYNTHETIC re-encode went out. Zero means none yet.
@@ -135,18 +138,48 @@ pub struct StaticIdrDecider {
 }
 
 impl StaticIdrDecider {
-    /// A decider whose quiet window defaults to one heartbeat.
+    /// A decider whose quiet window defaults to one heartbeat, and whose forced window IS the
+    /// quiet window.
     #[must_use]
     pub const fn new(heartbeat: f64, quiet_window: Option<f64>) -> Self {
+        let quiet = match quiet_window {
+            Some(window) => window,
+            None => heartbeat,
+        };
+        Self::with_forced_quiet(heartbeat, quiet, quiet)
+    }
+
+    /// A decider with its own forced window.
+    ///
+    /// The live path services a recovery request on the very next frame it encodes, so while
+    /// frames are flowing the timer has nothing to add. Once they stop — an unchanged screen
+    /// yields nothing the capture delivers — the timer is the ONLY path that can serve the
+    /// request, and the moment it can tell the live path has stopped is two capture intervals
+    /// after the last real frame. A forced window of that length is what a frozen client waits;
+    /// the heartbeat's quiet window is for the unforced crisp cadence and is an order of magnitude
+    /// longer than a client with a broken picture should sit.
+    #[must_use]
+    pub const fn with_forced_quiet(heartbeat: f64, quiet_window: f64, forced_quiet: f64) -> Self {
         Self {
             heartbeat,
-            quiet_window: match quiet_window {
-                Some(window) => window,
-                None => heartbeat,
-            },
+            quiet_window,
+            forced_quiet,
             last_complete_encode: 0.0,
             last_synthetic_encode: 0.0,
         }
+    }
+
+    /// When a FORCED re-encode becomes servable, in the caller's seconds — the last real frame
+    /// plus the forced window. Zero before any real frame, which is "now".
+    ///
+    /// A timer that only polls would answer a request one poll tick late; this is what lets it
+    /// wake for the request instead.
+    #[must_use]
+    pub fn forced_ready_at(&self) -> f64 {
+        if self.last_complete_encode == 0.0 {
+            return 0.0;
+        }
+        self.last_complete_encode + self.forced_quiet
     }
 
     /// The capture path encoded a REAL frame, which re-anchors the live clock so the timer stays
@@ -175,17 +208,17 @@ impl StaticIdrDecider {
         if !has_retained_buffer {
             return false; // nothing to re-encode, as before the first ever real frame
         }
+        // A recovery request while the live path is driving is serviced faster by that path's own
+        // latch drain, so it waits its FORCED window — and no longer: once that has passed with no
+        // real frame the live path has stopped, a client is frozen, and that is latency-critical,
+        // whatever the heartbeat phase.
+        if forced_latched {
+            return now >= self.forced_ready_at();
+        }
         // A real frame inside the quiet window means the live path is driving the stream, so let it
-        // own the cadence. A recovery request while live is already serviced faster by the live
-        // path's own latch drain — this timer is the fallback for when that path has gone quiet, so
-        // the quiet window gates the forced case too.
+        // own the cadence.
         if self.last_complete_encode != 0.0 && now - self.last_complete_encode < self.quiet_window {
             return false;
-        }
-        // Once the live path IS quiet a recovery request always wins, whatever the heartbeat phase:
-        // a client is frozen, and that is latency-critical.
-        if forced_latched {
-            return true;
         }
         if self.last_synthetic_encode == 0.0 {
             return true; // armed, quiet, and nothing emitted yet
@@ -428,6 +461,36 @@ mod tests {
         decider.record_synthetic(101.0);
         assert!(!decider.should_reencode(101.5, false, true));
         assert!(decider.should_reencode(102.0, false, true));
+    }
+
+    /// The forced window is the capture interval's, not the heartbeat's: a request that lands after
+    /// the last frame of a scroll is served two capture intervals later, not a quiet window later.
+    #[test]
+    fn a_frozen_client_is_served_two_capture_intervals_after_the_last_live_frame() {
+        let mut decider = StaticIdrDecider::with_forced_quiet(2.5, 0.3, 2.0 / 120.0);
+        decider.on_complete_frame(100.0);
+        assert!(
+            !decider.should_reencode(100.010, true, true),
+            "inside the forced window the live path still owns the request"
+        );
+        assert!(
+            decider.should_reencode(100.020, true, true),
+            "past it the live path has stopped and the timer serves the request"
+        );
+        assert!(
+            !decider.should_reencode(100.020, false, true),
+            "the unforced crisp cadence still waits out the quiet window"
+        );
+        assert!(
+            (decider.forced_ready_at() - (100.0 + 2.0 / 120.0)).abs() < f64::EPSILON,
+            "and the timer can be told exactly when to wake for it"
+        );
+    }
+
+    #[test]
+    fn before_any_real_frame_a_forced_request_is_servable_at_once() {
+        let decider = StaticIdrDecider::with_forced_quiet(2.5, 0.3, 0.02);
+        assert!((decider.forced_ready_at()).abs() < f64::EPSILON);
     }
 
     #[test]

@@ -54,12 +54,20 @@
 //! * **The hop** is `slopdesk-apple-nsapp::on_main`, beside the two loops that DRAIN the queue it
 //!   posts to. A hop onto a queue nothing drains is work handed to a thread that never looks, so
 //!   the pair belongs in one crate.
-//! * **The cursor seed** has no wrapper and will not get one. It is `CGSCurrentCursorSeed` behind a
-//!   private CoreGraphics connection — no `objc2` binding exists, and hand-writing the `extern`
-//!   would put a private symbol inside the one family `docs/57` §2 says calls Apple only through
-//!   generated bindings. [`HostPointer::cursor_seed`] therefore answers `None`, which is the exact
-//!   case [`ReadsPointer::cursor_seed`] documents: the refresh policy's unconditional cadence is
-//!   what carries the shape, one safety refresh later than a seed would have.
+//! * **The cursor seed** is `CGSCurrentCursorSeed` behind a private CoreGraphics connection. No
+//!   `objc2` binding exists, and hand-writing the `extern` would put a private symbol inside the
+//!   one family `docs/57` §2 says calls Apple only through generated bindings — so the symbol is
+//!   resolved and called by `slopdesk_posix::dynsym`, the crate licensed for a raw `dlsym`, and
+//!   [`HostPointer::cursor_seed`] only asks it. The seed is what makes the shape path EVENT-DRIVEN:
+//!   the main-thread read runs on the tick the displayed cursor changed and on the slow safety
+//!   cadence, not thirty times a second to discover nothing changed.
+//!
+//! ## Silence is the idle state
+//! A parked pointer costs the wire nothing. [`Sampler::position`] answers a datagram only when the
+//! position, the visibility or the shape id moved since the last one, plus one keep-alive per
+//! [`KEEPALIVE_TICKS`] so a lost datagram heals and a client that joined late converges. The client
+//! keeps the last pointer it was given until told otherwise — it has no staleness timer — which is
+//! what makes the silence safe.
 
 use core::fmt;
 use std::collections::HashMap;
@@ -77,6 +85,12 @@ use slopdesk_video::geometry::{VideoPoint, VideoRect, VideoSize};
 
 /// Sample rate — `docs/17` §3.3's "~120 Hz".
 pub const SAMPLE_HZ: f64 = 120.0;
+
+/// How many samples an UNCHANGED pointer stays silent for before one goes out anyway.
+///
+/// About once a second at the sample rate. A lost datagram is healed within this, and nothing
+/// downstream times a pointer out, so the figure is a repair interval rather than a liveness one.
+pub const KEEPALIVE_TICKS: u32 = 120;
 
 /// The two reads the HOT path makes, both safe off the main thread.
 ///
@@ -114,7 +128,8 @@ pub trait ReadsShape: Send + Sync + fmt::Debug {
 
 /// Where the two encoded messages go.
 pub trait SendsCursor: Send + Sync + fmt::Debug {
-    /// An encoded [`CursorUpdate`], ~120 times a second.
+    /// An encoded [`CursorUpdate`]: one per sample while the pointer moves, one a second while it
+    /// rests.
     fn update(&self, datagram: &[u8]);
 
     /// An encoded [`CursorShapeMessage`], ONCE per newly-seen shape id (and again on a re-ship
@@ -179,17 +194,13 @@ impl ReadsPointer for HostPointer {
         slopdesk_apple_nsevent::pointer_cocoa()
     }
 
-    /// Always `None`, and permanently.
+    /// The window server's seed, through the one crate licensed to resolve the private symbol.
     ///
-    /// The window server's cursor seed is `CGSCurrentCursorSeed` behind a private CoreGraphics
-    /// connection. No `objc2` binding exists for it, and hand-writing the `extern` would put a
-    /// private symbol inside the one crate family `docs/57` §2 restricts to generated bindings — so
-    /// the answer is the absence [`ReadsPointer::cursor_seed`] already documents rather than a
-    /// fourth `unsafe` crate. The cost is bounded and known: [`ShapeRefreshPolicy`] falls back to
-    /// its unconditional cadence, so a shape change lands one fallback tick late instead of on the
-    /// tick the seed would have flagged.
+    /// `None` on an OS that dropped the symbol, which is the fallback cadence's case and not an
+    /// error. One uncontended lock and one window-server round trip per tick, on this thread —
+    /// the same trip the pointer read already makes.
     fn cursor_seed(&self) -> Option<i32> {
-        None
+        slopdesk_posix::dynsym::cursor_seed()
     }
 }
 
@@ -258,6 +269,11 @@ struct Hot {
     policy: ShapeRefreshPolicy,
     /// Set when a refresh changed the shape id, cleared by [`Sampler::take_id_change`].
     id_changed: bool,
+    /// What the last emitted update said — position, visibility, shape id — so an identical one
+    /// is not emitted again.
+    last_sent: Option<(VideoPoint, bool, u16)>,
+    /// Samples since the last emitted update, for the keep-alive.
+    since_sent: u32,
 }
 
 /// The shape inventory.
@@ -303,6 +319,8 @@ impl Sampler {
                 tick: 0,
                 policy: ShapeRefreshPolicy::new(),
                 id_changed: false,
+                last_sent: None,
+                since_sent: 0,
             }),
             shapes: Mutex::new(Shapes::default()),
         }
@@ -326,17 +344,27 @@ impl Sampler {
     }
 
     /// The encoded [`CursorUpdate`] for a mouse at these GLOBAL COCOA points, or `None` before the
-    /// first refresh has primed the shape and the screen height.
+    /// first refresh has primed the shape and the screen height — and `None` again for a sample
+    /// that would say exactly what the last one said, until [`KEEPALIVE_TICKS`] of those have
+    /// passed.
     ///
-    /// That `None` is the whole gate: an update sent early would name a shape the client has never
-    /// been given, and place it against a screen height of zero.
+    /// The priming `None` is the whole gate: an update sent early would name a shape the client has
+    /// never been given, and place it against a screen height of zero. The resting `None` is what
+    /// keeps a parked pointer off the wire.
     #[must_use]
     pub fn position(&self, mouse_cocoa: VideoPoint) -> Option<Vec<u8>> {
-        let hot = self.hot.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut hot = self.hot.lock().unwrap_or_else(PoisonError::into_inner);
         if !hot.primed {
             return None;
         }
         let (position, visible) = window_position(mouse_cocoa, hot.primary_height, hot.bounds);
+        let said = (position, visible, hot.shape_id);
+        hot.since_sent = hot.since_sent.saturating_add(1);
+        if hot.last_sent == Some(said) && hot.since_sent < KEEPALIVE_TICKS {
+            return None;
+        }
+        hot.last_sent = Some(said);
+        hot.since_sent = 0;
         let update = CursorUpdate::new(position, hot.shape_id, hot.hotspot, visible);
         drop(hot);
         Some(update.encode())
@@ -675,7 +703,10 @@ mod tests {
     use slopdesk_video::cursor::CursorUpdate;
     use slopdesk_video::geometry::{VideoPoint, VideoRect};
 
-    use super::{CursorSampler, HopsToMain, ReadsPointer, ReadsShape, Sampler, SendsCursor, fitting_png};
+    use super::{
+        CursorSampler, HopsToMain, KEEPALIVE_TICKS, ReadsPointer, ReadsShape, Sampler, SendsCursor,
+        fitting_png,
+    };
 
     /// A cursor with no bitmap: everything the sampler keys on except the picture.
     ///
@@ -872,6 +903,44 @@ mod tests {
         );
     }
 
+    /// A pointer that has not moved says nothing, sample after sample, until the keep-alive is
+    /// due; a moved one speaks at once. This is what keeps a parked pointer off the wire.
+    #[test]
+    fn an_unmoved_pointer_sends_nothing_until_the_keepalive() {
+        let sampler = Sampler::new(WINDOW);
+        let _priming = sampler.refresh(&shape(1.0), 1000.0);
+        let parked = VideoPoint::new(10.0, 1000.0);
+        assert!(sampler.position(parked).is_some(), "the first sample is news");
+        let silent = (1..KEEPALIVE_TICKS)
+            .filter(|_| sampler.position(parked).is_some())
+            .count();
+        assert_eq!(silent, 0, "{silent} repeats of the same position went out");
+        assert!(
+            sampler.position(parked).is_some(),
+            "the keep-alive goes out on the tick it is due"
+        );
+        assert!(
+            sampler.position(VideoPoint::new(11.0, 1000.0)).is_some(),
+            "a move is news at once"
+        );
+    }
+
+    /// A shape change alone is news, at the very same position: the client switches its pointer on
+    /// the next update carrying the new id, so that update must exist.
+    #[test]
+    fn a_shape_change_at_the_same_position_is_sent() {
+        let sampler = Sampler::new(WINDOW);
+        let _priming = sampler.refresh(&shape(1.0), 1000.0);
+        let parked = VideoPoint::new(10.0, 1000.0);
+        assert!(sampler.position(parked).is_some());
+        assert_eq!(sampler.position(parked), None);
+        let _different = sampler.refresh(&shape(9.0), 1000.0);
+        assert_eq!(
+            sampler.position(parked).as_deref().and_then(decoded),
+            Some((1, true, VideoPoint::new(10.0, 0.0)))
+        );
+    }
+
     /// A shape never minted has nothing to re-ship, and asking does not read the cursor to invent
     /// one — a client asking for a lost id must get that id or nothing, never whatever is on screen
     /// now. Nothing renderable was ever stored here, so even the id that WAS minted answers
@@ -924,11 +993,17 @@ mod tests {
             Inline,
             WINDOW,
         );
-        assert!(until(|| log.update_count() >= 3), "the thread never sampled");
+        assert!(until(|| log.update_count() >= 1), "the thread never sampled");
         assert!(
             desk.shape_reads.load(Ordering::Relaxed) >= 1,
             "the prime hop never ran"
         );
+        // A parked pointer is silent, so the proof that the thread KEEPS sampling is that moving
+        // the pointer is heard.
+        *desk.mouse.lock().unwrap_or_else(PoisonError::into_inner) = (20.0, 1000.0);
+        assert!(until(|| log.update_count() >= 2), "a moved pointer was not heard");
+        *desk.mouse.lock().unwrap_or_else(PoisonError::into_inner) = (30.0, 1000.0);
+        assert!(until(|| log.update_count() >= 3), "a second move was not heard");
         assert_eq!(
             log.shape_count(),
             0,

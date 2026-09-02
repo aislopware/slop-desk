@@ -5,6 +5,11 @@
 //! appends FEC parity, optionally interleaves for burst resilience, and stamps the 19-byte header.
 //! The symmetric counterpart of the reassembler.
 //!
+//! Each datagram is written ONCE, into the `Vec` the socket sends: the header straight in, the
+//! payload copied from the frame straight behind it. There is no intermediate fragment on the send
+//! path — [`VideoPacketizer::packetize`] parses the finished datagrams for the readers that want
+//! headers, so the parsed shape is derived from the wire bytes and can never drift from them.
+//!
 //! The two counters live here: `stream_seq` is monotonic per DATAGRAM, `frame_id` per FRAME. Both
 //! wrap rather than overflow, because a session long enough to exhaust a `u32` must keep streaming
 //! rather than fail.
@@ -26,7 +31,7 @@
 
 use crate::bytes::truncating_u16;
 use crate::fec::ReedSolomonFec;
-use crate::fragment::{Flags, FrameFragment, FrameFragmentHeader, MAX_PAYLOAD_SIZE};
+use crate::fragment::{Flags, FrameFragment, FrameFragmentHeader, MAX_PAYLOAD_SIZE, encode_datagram};
 use crate::reassembler::MAX_FRAGMENTS_PER_FRAME;
 use crate::{adaptive_fec, interleaver};
 
@@ -125,32 +130,39 @@ impl VideoPacketizer {
         self.next_frame_id
     }
 
-    /// Fragments one encoded frame into data fragments, then parity fragments, in send order.
-    pub fn packetize(&mut self, frame: &[u8], options: PacketizeOptions) -> Vec<FrameFragment> {
-        let fragments = self.packetize_fragments(frame, options);
+    /// Fragments one encoded frame into its wire datagrams — data fragments, then parity, then
+    /// whatever reorder the interleaver applies — in send order.
+    ///
+    /// THE send path: each datagram is written once, header then payload, into the one `Vec` that
+    /// reaches the socket. The parsed shape [`Self::packetize`] answers is decoded from these
+    /// bytes, never the other way round, so the two cannot disagree.
+    pub fn packetize_raw(&mut self, frame: &[u8], options: PacketizeOptions) -> Vec<Vec<u8>> {
+        let (datagrams, data_count) = self.packetize_datagrams(frame, options);
         if !options.interleave {
-            return fragments;
+            return datagrams;
         }
         // Interleave is keyed by the SAME per-frame group size the parity used, so the OFF tier's
         // `None` collapses to 1 and the reorder becomes a no-op.
         let default_group = self.fec.map_or(1, |scheme| scheme.group_size());
         let group = adaptive_fec::group_size(options.fec_tier, default_group).unwrap_or(1);
-        interleaver::interleave(fragments, group)
+        interleaver::interleave(datagrams, data_count, group)
     }
 
-    /// The send-path fast path: finished wire datagrams, skipping the fragment parse and re-encode
-    /// the host never needs. Byte-identical to `packetize(..)` followed by encoding each fragment.
-    pub fn packetize_raw(&mut self, frame: &[u8], options: PacketizeOptions) -> Vec<Vec<u8>> {
-        self.packetize(frame, options)
+    /// The same datagrams as [`Self::packetize_raw`], parsed — for a caller that reads headers
+    /// and payloads rather than sending bytes: the reassembler's tests, and the FEC round trips.
+    ///
+    /// A datagram this packetizer wrote always decodes, so a decode failure is a bug in the
+    /// writer; it is dropped rather than unwrapped because the send path never takes this route.
+    pub fn packetize(&mut self, frame: &[u8], options: PacketizeOptions) -> Vec<FrameFragment> {
+        self.packetize_raw(frame, options)
             .iter()
-            .map(FrameFragment::encode)
+            .filter_map(|datagram| FrameFragment::decode(datagram).ok())
             .collect()
     }
 
-    /// Builds the frame's fragments — data, then parity — assigning the per-frame `frame_id` and a
-    /// monotonic `stream_seq` per datagram. Shared by both entry points so the counters advance
-    /// once per frame whichever the caller used.
-    fn packetize_fragments(&mut self, frame: &[u8], options: PacketizeOptions) -> Vec<FrameFragment> {
+    /// Writes the frame's datagrams — data, then parity — assigning the per-frame `frame_id` and a
+    /// monotonic `stream_seq` per datagram, and answers how many of them are data.
+    fn packetize_datagrams(&mut self, frame: &[u8], options: PacketizeOptions) -> (Vec<Vec<u8>>, usize) {
         let frame_id = self.next_frame_id;
         self.next_frame_id = self.next_frame_id.wrapping_add(1);
 
@@ -173,7 +185,7 @@ impl VideoPacketizer {
         // frame id is still consumed: the host recorded it before packetizing, and a gap is the
         // loss shape the recovery ladder already handles.
         if payloads.len() + parity_payloads.len() > MAX_FRAGMENTS_PER_FRAME {
-            return Vec::new();
+            return (Vec::new(), 0);
         }
 
         let frag_count = truncating_u16(payloads.len() + parity_payloads.len());
@@ -195,21 +207,22 @@ impl VideoPacketizer {
         base_flags.set_fec_tier(options.fec_tier);
         let parity_flags = base_flags.union(Flags::PARITY);
 
-        let mut fragments = Vec::with_capacity(payloads.len() + parity_payloads.len());
+        let data_count = payloads.len();
+        let mut datagrams = Vec::with_capacity(data_count + parity_payloads.len());
         let mut frag_index: u16 = 0;
         for payload in payloads {
-            fragments.push(self.make_fragment(
+            datagrams.push(self.write_datagram(
                 frame_id,
                 frag_index,
                 frag_count,
                 base_flags,
-                payload.to_vec(),
+                payload,
                 options.host_send_ts_millis,
             ));
             frag_index = frag_index.wrapping_add(1);
         }
-        for payload in parity_payloads {
-            fragments.push(self.make_fragment(
+        for payload in &parity_payloads {
+            datagrams.push(self.write_datagram(
                 frame_id,
                 frag_index,
                 frag_count,
@@ -219,7 +232,7 @@ impl VideoPacketizer {
             ));
             frag_index = frag_index.wrapping_add(1);
         }
-        fragments
+        (datagrams, data_count)
     }
 
     /// This frame's parity shards, at the group size and multiplicity the tier selects.
@@ -241,15 +254,17 @@ impl VideoPacketizer {
         scheme.parity_with_m(payloads, group, m)
     }
 
-    const fn make_fragment(
+    /// One wire datagram — the header stamped with the next `stream_seq`, then the payload — in
+    /// the single allocation it will be sent from.
+    fn write_datagram(
         &mut self,
         frame_id: u32,
         frag_index: u16,
         frag_count: u16,
         flags: Flags,
-        payload: Vec<u8>,
+        payload: &[u8],
         host_send_ts_millis: u32,
-    ) -> FrameFragment {
+    ) -> Vec<u8> {
         let stream_seq = self.next_stream_seq;
         self.next_stream_seq = self.next_stream_seq.wrapping_add(1);
         let header = FrameFragmentHeader::new(
@@ -261,7 +276,7 @@ impl VideoPacketizer {
             truncating_u16(payload.len()),
             host_send_ts_millis,
         );
-        FrameFragment::new(header, payload)
+        encode_datagram(&header, payload)
     }
 }
 
@@ -276,7 +291,7 @@ mod tests {
     use super::{PacketizeOptions, VideoPacketizer};
     use crate::adaptive_fec;
     use crate::fec::ReedSolomonFec;
-    use crate::fragment::{Flags, FrameFragment, MAX_PAYLOAD_SIZE};
+    use crate::fragment::{Flags, FrameFragment, MAX_DATAGRAM_SIZE, MAX_PAYLOAD_SIZE};
 
     fn frame_of(len: usize) -> Vec<u8> {
         (0..len).map(truncate).collect()
@@ -355,13 +370,17 @@ mod tests {
         assert_eq!(packetizer.peek_next_frame_id(), frame_id);
     }
 
+    /// The parsed shape re-encodes to the datagrams it was parsed from — every header field and
+    /// every payload byte, with the interleaver's reorder applied to both.
     #[test]
     fn the_raw_path_is_byte_identical_to_encoding_each_fragment() {
         let options = PacketizeOptions {
             host_send_ts_millis: 77,
+            interleave: true,
+            fec_tier: 3,
             ..PacketizeOptions::keyframe()
         };
-        let frame = frame_of(MAX_PAYLOAD_SIZE * 2 + 5);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 8 + 5);
         let mut through_fragments = VideoPacketizer::new(Some(ReedSolomonFec::default()));
         let mut through_raw = VideoPacketizer::new(Some(ReedSolomonFec::default()));
         let encoded: Vec<Vec<u8>> = through_fragments
@@ -369,7 +388,13 @@ mod tests {
             .iter()
             .map(FrameFragment::encode)
             .collect();
-        assert_eq!(through_raw.packetize_raw(&frame, options), encoded);
+        let raw = through_raw.packetize_raw(&frame, options);
+        assert_eq!(raw.len(), encoded.len());
+        assert_eq!(raw, encoded);
+        assert!(
+            raw.iter().all(|datagram| datagram.len() <= MAX_DATAGRAM_SIZE),
+            "every datagram, parity included, stays inside the MTU budget"
+        );
     }
 
     #[test]

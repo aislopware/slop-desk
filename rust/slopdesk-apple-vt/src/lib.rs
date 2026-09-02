@@ -63,7 +63,7 @@ pub use objc2_core_media::CMSampleBuffer;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use objc2_core_video::CVImageBuffer;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-pub use pixels::{Locked, PixelBuffer, PlaneBytes, PlaneView, image_size};
+pub use pixels::{Locked, PixelBuffer, PixelBufferPool, PlaneBytes, PlaneView, image_size};
 #[cfg(target_os = "macos")]
 pub use sample::EncodedSample;
 #[cfg(target_os = "macos")]

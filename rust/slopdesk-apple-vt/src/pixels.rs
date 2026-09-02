@@ -37,11 +37,11 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use objc2_core_foundation::{CFDictionary, CFRetained, CFString, CFType};
+use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained, CFString, CFType};
 use objc2_core_video::{
     CVImageBuffer, CVPixelBuffer, CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRowOfPlane,
     CVPixelBufferGetHeight, CVPixelBufferGetHeightOfPlane, CVPixelBufferGetWidth,
-    CVPixelBufferGetWidthOfPlane, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
+    CVPixelBufferGetWidthOfPlane, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferPool,
     CVPixelBufferUnlockBaseAddress,
 };
 
@@ -200,6 +200,101 @@ impl PixelBuffer {
         } else {
             objc2_core_video::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         }
+    }
+}
+
+/// A recycler of `IOSurface`-backed NV12 buffers of one shape.
+///
+/// A buffer made by [`PixelBuffer::nv12`] is a fresh `IOSurface` every time — allocated, mapped
+/// and page-faulted in before the first byte lands — and a consumer that rebuilds one per live
+/// frame pays that on every frame it encodes. A pool hands the surface a dropped buffer released
+/// straight back to the next request, so a steady stream of same-shaped rebuilds settles on a few
+/// surfaces that are already mapped. It answers the same [`PixelBuffer`] the fresh path does,
+/// which is what lets the two be swapped under one caller.
+///
+/// NOT `Send` and NOT `Sync`, like every other framework object in this crate: the pool lives on
+/// the one thread that draws from it.
+#[derive(Debug)]
+pub struct PixelBufferPool {
+    /// The framework object, released when this drops; its idle surfaces go with it.
+    pool: CFRetained<CVPixelBufferPool>,
+    width: usize,
+    height: usize,
+    full_range: bool,
+}
+
+impl PixelBufferPool {
+    /// Creates a pool of `IOSurface`-backed bi-planar NV12 buffers of the given size.
+    ///
+    /// # Errors
+    /// The framework's status, or [`NO_BUFFER`] when it reported success and wrote nothing.
+    pub fn nv12(width: usize, height: usize, full_range: bool) -> Result<Self, i32> {
+        let empty: CFRetained<CFDictionary<CFString, CFType>> = CFDictionary::from_slices(&[], &[]);
+        let format = CFNumber::new_i32(DecodeKey::nv12_format(full_range));
+        let width_value = CFNumber::new_isize(isize::try_from(width).map_err(|_| NO_BUFFER)?);
+        let height_value = CFNumber::new_isize(isize::try_from(height).map_err(|_| NO_BUFFER)?);
+        let keys: [&CFString; 4] = [
+            DecodeKey::PixelFormatType.cf(),
+            DecodeKey::Width.cf(),
+            DecodeKey::Height.cf(),
+            DecodeKey::IoSurfaceProperties.cf(),
+        ];
+        let values: [&CFType; 4] = [&**format, &**width_value, &**height_value, &**empty];
+        let attributes: CFRetained<CFDictionary<CFString, CFType>> =
+            CFDictionary::from_slices(&keys, &values);
+
+        let mut slot: *mut CVPixelBufferPool = core::ptr::null_mut();
+        // SAFETY: framework rule — the out-parameter's slot is live and correctly typed, and the
+        // attribute dictionary is a `CFDictionary` of the `CFString` keys the call documents.
+        #[expect(
+            unsafe_code,
+            reason = "a Core Video create with an out-parameter; the same shape `nv12` uses"
+        )]
+        let status = unsafe {
+            CVPixelBufferPool::create(None, None, Some(attributes.as_opaque()), NonNull::from(&mut slot))
+        };
+        if status != CV_SUCCESS {
+            return Err(status);
+        }
+        // SAFETY: framework rule — `CVPixelBufferPoolCreate` is a Create-rule function, so the
+        // slot holds a reference this call owns.
+        created(slot).map_or(Err(NO_BUFFER), |pool| {
+            Ok(Self {
+                pool,
+                width,
+                height,
+                full_range,
+            })
+        })
+    }
+
+    /// Whether this pool makes buffers of exactly the given shape — the test a caller runs before
+    /// drawing, so a resize replaces the pool rather than drawing the old size from it.
+    #[must_use]
+    pub const fn fits(&self, width: usize, height: usize, full_range: bool) -> bool {
+        self.width == width && self.height == height && self.full_range == full_range
+    }
+
+    /// Draws one buffer: an idle surface when the pool holds one, a fresh one otherwise.
+    ///
+    /// # Errors
+    /// The framework's status, or [`NO_BUFFER`] when it reported success and wrote nothing.
+    pub fn draw(&self) -> Result<PixelBuffer, i32> {
+        let mut slot: *mut CVPixelBuffer = core::ptr::null_mut();
+        // SAFETY: framework rule — the pool is a live Get-rule reference borrowed for the call and
+        // the out-parameter's slot is live and correctly typed.
+        #[expect(
+            unsafe_code,
+            reason = "a Core Video create with an out-parameter; the same shape `nv12` uses"
+        )]
+        let status =
+            unsafe { CVPixelBufferPool::create_pixel_buffer(None, &self.pool, NonNull::from(&mut slot)) };
+        if status != CV_SUCCESS {
+            return Err(status);
+        }
+        // SAFETY: framework rule — `CVPixelBufferPoolCreatePixelBuffer` is a Create-rule
+        // function, so the slot holds a reference this call owns.
+        created(slot).map_or(Err(NO_BUFFER), |buffer| Ok(PixelBuffer { buffer }))
     }
 }
 
@@ -386,7 +481,36 @@ impl Plane {
     reason = "a panic in a test IS the failure report, and each message names what the framework refused"
 )]
 mod tests {
-    use super::PixelBuffer;
+    use super::{PixelBuffer, PixelBufferPool};
+
+    /// A pool's buffer has the pool's shape and locks like a fresh one, and a hundred draws with
+    /// each buffer dropped before the next neither leak nor exhaust the surface cache — which is
+    /// the recycling this type exists for, observed the only way a test can observe it.
+    #[test]
+    fn a_pool_draws_buffers_of_its_own_shape_and_recycles_them() {
+        let Ok(pool) = PixelBufferPool::nv12(64, 32, false) else {
+            panic!("Core Video refused a 64x32 NV12 pool");
+        };
+        assert!(pool.fits(64, 32, false));
+        assert!(!pool.fits(64, 32, true), "the range is part of the shape");
+        assert!(!pool.fits(32, 64, false));
+        for _ in 0..100_u32 {
+            let Ok(buffer) = pool.draw() else {
+                panic!("the pool refused a draw");
+            };
+            let Some(locked) = buffer.lock() else {
+                panic!("the base address would not lock");
+            };
+            let Some(luma) = locked.plane_view(0) else {
+                panic!("no luma plane");
+            };
+            assert_eq!((luma.width, luma.height), (64, 32));
+            let Some(chroma) = locked.plane_view(1) else {
+                panic!("no chroma plane");
+            };
+            assert_eq!((chroma.width, chroma.height), (32, 16));
+        }
+    }
 
     /// A create, a lock, two planes with the NV12 shape, and an unlock — the whole bracket. Runs
     /// headless: `CVPixelBufferCreate` needs no window server, unlike everything else in this

@@ -143,6 +143,7 @@ final class RustCodecWireVectorTests: XCTestCase {
                     scrollPhase: 2,
                     momentumPhase: 0,
                     continuous: true,
+                    modifiers: .command,
                     tag: 7,
                 ),
                 [
@@ -186,12 +187,13 @@ final class RustCodecWireVectorTests: XCTestCase {
                     0x02,
                     0x00,
                     0x01,
+                    0x08,
                 ],
-            ), // scrollPhase, momentumPhase, continuous
+            ), // scrollPhase, momentumPhase, continuous, modifiers
             (
-                .key(keyCode: 0x0035, down: true, modifiers: .option, tag: 4),
-                [0x05, 0, 0, 0, 4, 0x00, 0x35, 0x01, 0x04],
-            ),
+                .key(keyCode: 0x0035, down: true, isRepeat: true, modifiers: .option, tag: 4),
+                [0x05, 0, 0, 0, 4, 0x00, 0x35, 0x03, 0x04],
+            ), // state byte: bit 0 down, bit 1 autorepeat
             (.text("Hi", tag: 3), [0x06, 0, 0, 0, 3, 0x48, 0x69]),
         ]
         for (event, expected) in cases {

@@ -870,6 +870,7 @@ fn every_pinned_input_event_matches_in_both_directions() {
                         scroll_phase: byte("scrollPhase"),
                         momentum_phase: byte("momentumPhase"),
                         continuous: vector["continuous"].as_bool().expect("a continuous flag"),
+                        modifiers: InputModifiers::from_bits(byte("mods")),
                     },
                     tag,
                 )
@@ -880,6 +881,7 @@ fn every_pinned_input_event_matches_in_both_directions() {
                         key_code: u16::try_from(vector["keyCode"].as_u64().expect("a keycode"))
                             .expect("fits u16"),
                         down: vector["down"].as_bool().expect("a down flag"),
+                        repeat: vector["repeat"].as_bool().expect("a repeat flag"),
                         modifiers: InputModifiers::from_bits(byte("mods")),
                     },
                     tag,

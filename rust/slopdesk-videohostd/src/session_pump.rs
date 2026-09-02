@@ -523,6 +523,19 @@ pub struct Retired {
     held: Held,
 }
 
+impl Retired {
+    /// Blocks until every frame the retired encoder was handed has reached the sink.
+    ///
+    /// Called between the swap and the stream's reconfiguration, so nothing the OLD session still
+    /// holds can be emitted after a frame of the new size exists: frame ids are assigned at output
+    /// time, and an old-size delta trailing the new encoder's IDR would be a decode error and a
+    /// recovery IDR on the client. `VideoToolbox` drains in a few milliseconds; the reconfiguration
+    /// that follows takes longer anyway.
+    pub fn complete_frames(&self) {
+        self.held.encoder.complete_frames();
+    }
+}
+
 impl EncoderSlot {
     /// A slot pointed at `encoder`, with the size guard disarmed.
     #[must_use]

@@ -64,17 +64,23 @@ public enum InputEvent: Equatable, Sendable {
     /// 4=ended, 8=cancelled, 128=mayBegin); `momentumPhase` ∈ `CGMomentumScrollPhase` (0=none,
     /// 1=begin, 2=continue, 3=end) — and are mutually exclusive (at most one is non-zero per event).
     /// `continuous` mirrors `hasPreciseScrollingDeltas` (true = pixel-precise trackpad gesture).
-    case scroll(
+    /// `modifiers` are the keys held during the wheel, so a ⌘-wheel zoom lands as one on the host.
+    ///
+    /// The case mirrors the wire body field for field; a struct between it and the flat record
+    /// would be a third spelling of the same shape, which is why the count rule is silenced here.
+    case scroll( // swiftlint:disable:this enum_case_associated_values_count
         dx: Double,
         dy: Double,
         normalized: VideoPoint,
         scrollPhase: UInt8,
         momentumPhase: UInt8,
         continuous: Bool,
+        modifiers: InputModifiers = [],
         tag: UInt32,
     )
-    /// Key down/up by host virtual keycode (for navigation / shortcuts; doc 05 §3).
-    case key(keyCode: UInt16, down: Bool, modifiers: InputModifiers, tag: UInt32)
+    /// Key down/up by host virtual keycode (for navigation / shortcuts; doc 05 §3). `isRepeat`
+    /// mirrors `NSEvent.isARepeat`; the host stamps the autorepeat field on its synthetic event.
+    case key(keyCode: UInt16, down: Bool, isRepeat: Bool = false, modifiers: InputModifiers, tag: UInt32)
     /// Unicode text insertion (layout-independent; the robust text path, doc 05 §3).
     case text(String, tag: UInt32)
 
@@ -97,8 +103,8 @@ public enum InputEvent: Equatable, Sendable {
              let .mouseDown(_, _, _, _, tag),
              let .mouseUp(_, _, _, _, tag),
              let .mouseDrag(_, _, _, _, tag),
-             let .scroll(_, _, _, _, _, _, tag),
-             let .key(_, _, _, tag),
+             let .scroll(_, _, _, _, _, _, _, tag),
+             let .key(_, _, _, _, tag),
              let .text(_, tag):
             tag
         }
@@ -173,10 +179,12 @@ public enum InputEvent: Equatable, Sendable {
             return .scroll(
                 dx: flat.dx, dy: flat.dy, normalized: normalized,
                 scrollPhase: flat.scroll_phase, momentumPhase: flat.momentum_phase,
-                continuous: flat.continuous, tag: flat.tag,
+                continuous: flat.continuous, modifiers: mods, tag: flat.tag,
             )
         case 5:
-            return .key(keyCode: flat.key_code, down: flat.down, modifiers: mods, tag: flat.tag)
+            return .key(
+                keyCode: flat.key_code, down: flat.down, isRepeat: flat.autorepeat, modifiers: mods, tag: flat.tag,
+            )
         default:
             // The text arm: its bytes stay in the caller's datagram, and the codec proved every one
             // of them is UTF-8 before it reported where they start.
@@ -198,7 +206,7 @@ public enum InputEvent: Equatable, Sendable {
         self = .scroll(
             dx: flat.dx, dy: flat.dy, normalized: VideoPoint(x: flat.x, y: flat.y),
             scrollPhase: flat.scroll_phase, momentumPhase: flat.momentum_phase,
-            continuous: flat.continuous, tag: flat.tag,
+            continuous: flat.continuous, modifiers: InputModifiers(rawValue: flat.modifiers), tag: flat.tag,
         )
     }
 
@@ -223,7 +231,7 @@ public enum InputEvent: Equatable, Sendable {
             flat.button = button.rawValue
             flat.click_count = clickCount
             flat.modifiers = mods.rawValue
-        case let .scroll(dx, dy, n, scrollPhase, momentumPhase, continuous, _):
+        case let .scroll(dx, dy, n, scrollPhase, momentumPhase, continuous, mods, _):
             flat.x = n.x
             flat.y = n.y
             flat.dx = dx
@@ -231,9 +239,11 @@ public enum InputEvent: Equatable, Sendable {
             flat.scroll_phase = scrollPhase
             flat.momentum_phase = momentumPhase
             flat.continuous = continuous
-        case let .key(keyCode, down, mods, _):
+            flat.modifiers = mods.rawValue
+        case let .key(keyCode, down, isRepeat, mods, _):
             flat.key_code = keyCode
             flat.down = down
+            flat.autorepeat = isRepeat
             flat.modifiers = mods.rawValue
         case .text:
             flat.text_offset = slopdesk_input_event_constant(0)

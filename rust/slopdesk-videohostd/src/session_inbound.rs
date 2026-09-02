@@ -90,6 +90,13 @@ pub trait InputInjector: Send + Sync + core::fmt::Debug {
     /// What the user is physically holding, for seeding the injector that replaces this one.
     fn balance(&self) -> HeldInput;
 
+    /// Lets go of everything the user is still holding, because no injector will replace this one.
+    ///
+    /// The other end of [`Self::balance`]: a re-mint CARRIES the held state, a final teardown
+    /// RELEASES it, and the session says which by calling exactly one of the two. Inert by default
+    /// for the recorder's reason — it holds nothing.
+    fn release_all(&self) {}
+
     /// Re-points the coordinate mapping at a new rectangle, in GLOBAL CG points.
     ///
     /// The FOURTH method, and here for the same reason the third is: the session owns no other
@@ -427,6 +434,17 @@ impl Session {
         drop(input);
     }
 
+    /// Uninstalls the injector and hands it back, so the caller can act on it OUTSIDE the lock —
+    /// a release posts at the window server, and a post under this lock would hold every inbound
+    /// drain for a round trip.
+    pub(crate) fn take_input_injector(&self) -> Option<Arc<dyn InputInjector>> {
+        let extras = self.extras()?;
+        let mut input = extras.locked_input();
+        let taken = input.injector.take();
+        drop(input);
+        taken
+    }
+
     /// What the installed injector says the user is physically holding, or an empty ledger.
     ///
     /// Read by the bring-up BEFORE it tears the last stream down, so a transparent reconnect seeds
@@ -566,19 +584,22 @@ impl Session {
             capture.set_client_silence_paused(false);
         }
 
+        // Gated on streaming exactly as `input_routing`'s own route is. Read ONCE per batch rather
+        // than per datagram: the answer cannot change under this thread — the transitions that
+        // flip it are control messages, which this same loop is the one to handle — and a state
+        // lock per datagram was the receive path's only per-event lock besides the queue's.
+        let flowing = {
+            let state = self.locked_state();
+            let flowing = state.media_flowing();
+            drop(state);
+            flowing
+        };
         let mut run: Vec<InputEvent> = Vec::new();
         for (channel, datagram) in batch {
             match *channel {
                 VideoChannel::Input => {
-                    // Gated on streaming exactly as `input_routing`'s own route is, and decoded
-                    // HERE so the run can be coalesced. A malformed datagram is dropped; a corrupt
-                    // single packet must never take the receiver down.
-                    let flowing = {
-                        let state = self.locked_state();
-                        let flowing = state.media_flowing();
-                        drop(state);
-                        flowing
-                    };
+                    // Decoded HERE so the run can be coalesced. A malformed datagram is dropped; a
+                    // corrupt single packet must never take the receiver down.
                     if !flowing {
                         continue;
                     }

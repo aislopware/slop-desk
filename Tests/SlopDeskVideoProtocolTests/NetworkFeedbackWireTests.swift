@@ -15,8 +15,9 @@ final class NetworkFeedbackWireTests: XCTestCase {
 
     func testHeaderIsNineteenBytes() {
         XCTAssertEqual(FrameFragmentHeader.size, 19, "header grew 15→19 for the 4-byte hostSendTsMillis")
-        // The payload cap derives from the header size, so it shrank by the same 4 bytes.
-        XCTAssertEqual(VideoPacketizer.maxPayloadSize, 1200 - 19)
+        // The payload cap derives from the header size and the parity shard's 4-byte length prefix,
+        // so a full parity fragment still fits the 1200-byte datagram.
+        XCTAssertEqual(VideoPacketizer.maxPayloadSize, 1200 - 19 - 4)
     }
 
     func testHostSendTsRoundTrips() throws {

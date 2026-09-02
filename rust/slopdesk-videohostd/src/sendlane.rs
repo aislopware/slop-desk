@@ -63,11 +63,23 @@ pub trait DatagramSink: Send + Sync + core::fmt::Debug {
     /// Writes one finished datagram to a channel. Called from the lane's consumer thread, and from
     /// a producer's own thread on the inline path — never with the lane's lock held.
     fn send(&self, datagram: &[u8], channel: VideoChannel);
+
+    /// Writes a run of datagrams to one channel, in order. The default is one `send` each; the
+    /// transport overrides it to resolve the peer once for the run.
+    fn send_many(&self, datagrams: &mut dyn Iterator<Item = &[u8]>, channel: VideoChannel) {
+        for datagram in datagrams {
+            self.send(datagram, channel);
+        }
+    }
 }
 
 impl DatagramSink for MuxLaneTransport {
     fn send(&self, datagram: &[u8], channel: VideoChannel) {
         Self::send(self, datagram, channel);
+    }
+
+    fn send_many(&self, datagrams: &mut dyn Iterator<Item = &[u8]>, channel: VideoChannel) {
+        Self::send_many(self, datagrams, channel);
     }
 }
 
@@ -293,9 +305,7 @@ impl Shared {
 
     /// Writes a whole job to the sink, in wire order and with no lock held.
     fn write(&self, job: &Job) {
-        for outgoing in job.outgoings() {
-            self.sink.send(&outgoing.bytes, outgoing.channel);
-        }
+        self.send_chunk(job, 0, job.outgoings().len());
     }
 
     /// Waits for the next job, answering it with the generation it must survive, or `None` once the
@@ -334,17 +344,35 @@ impl Shared {
         // own offsets are relative to this instant.
         let start = Instant::now();
         for (index, chunk) in plan.iter().enumerate() {
-            for slot in chunk.start..chunk.end {
-                if let Some(outgoing) = job.outgoings().get(slot) {
-                    self.sink.send(&outgoing.bytes, outgoing.channel);
-                }
-            }
+            self.send_chunk(job, chunk.start, chunk.end);
             let Some(next) = plan.get(index + 1) else {
                 return;
             };
             if !self.park_until(start + Duration::from_nanos(next.due_nanos), generation) {
                 return;
             }
+        }
+    }
+
+    /// One chunk's slots, as runs of consecutive datagrams on the same channel — a frame's
+    /// fragments are one run, so the sink resolves its peer once per chunk rather than per
+    /// datagram.
+    fn send_chunk(&self, job: &Job, start: usize, end: usize) {
+        let outgoings = job.outgoings();
+        let mut rest = outgoings
+            .get(start.min(outgoings.len())..end.min(outgoings.len()))
+            .unwrap_or_default();
+        while let Some(first) = rest.first() {
+            let run = rest
+                .iter()
+                .take_while(|outgoing| outgoing.channel == first.channel)
+                .count();
+            let (head, tail) = rest.split_at(run);
+            self.sink.send_many(
+                &mut head.iter().map(|outgoing| outgoing.bytes.as_slice()),
+                first.channel,
+            );
+            rest = tail;
         }
     }
 

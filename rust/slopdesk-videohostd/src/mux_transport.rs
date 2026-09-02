@@ -48,6 +48,8 @@
 
 use std::io::Write as _;
 use std::net::{SocketAddr, UdpSocket};
+use std::os::fd::AsRawFd as _;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -184,6 +186,10 @@ struct Inner {
     state: Mutex<State>,
     /// Woken on stop, so a reaper parked on its tick does not hold the join open.
     tick: Condvar,
+    /// Datagrams `send_to` refused even after the one retry — the host-side half of the loss the
+    /// client's estimate otherwise attributes to the path. Read by
+    /// [`MuxDatagramTransport::send_failures`].
+    send_failures: AtomicU64,
 }
 
 /// The host UDP video transport.
@@ -211,6 +217,11 @@ impl MuxDatagramTransport {
     pub fn bind(media_port: u16, cursor_port: u16, timing: MuxTiming) -> std::io::Result<Self> {
         let media = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], media_port)))?;
         let cursor = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], cursor_port)))?;
+        // The same widening superd gives its sockets. On Darwin `SO_SNDBUF` bounds the largest
+        // datagram rather than the queue, so this is insurance rather than the burst fix; the
+        // receive side is what a keyframe's hundred-odd datagrams arriving faster than the reader
+        // drains them actually needs.
+        slopdesk_posix::sock::widen_buffers(media.as_raw_fd(), 4 << 20);
         // A bounded receive so a lost wake datagram cannot hold a join open for ever. The cadence
         // is the reaper's, because a coarse poll is all this is; the datagram is what makes a stop
         // prompt.
@@ -232,9 +243,28 @@ impl MuxDatagramTransport {
                     stopped: false,
                 }),
                 tick: Condvar::new(),
+                send_failures: AtomicU64::new(0),
             }),
             threads: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Datagrams the socket refused even after the retry — see `Inner::send_framed`.
+    #[must_use]
+    pub fn send_failures(&self) -> u64 {
+        self.inner.send_failures.load(Ordering::Relaxed)
+    }
+
+    /// A run of datagrams on one channel, with the peer resolved ONCE under the state lock rather
+    /// than once per datagram — the lock the receive loops take per inbound datagram, cursor
+    /// stream included, so a keyframe's hundred-odd sends no longer contend with them one by one.
+    pub fn send_many(
+        &self,
+        datagrams: &mut dyn Iterator<Item = &[u8]>,
+        channel: VideoChannel,
+        channel_id: u32,
+    ) {
+        self.inner.send_many(datagrams, channel, channel_id);
     }
 
     /// The port the media socket actually bound.
@@ -347,6 +377,10 @@ impl LaneControl for MuxDatagramTransport {
 
     fn send(&self, datagram: &[u8], channel: VideoChannel, channel_id: u32) {
         Self::send(self, datagram, channel, channel_id);
+    }
+
+    fn send_many(&self, datagrams: &mut dyn Iterator<Item = &[u8]>, channel: VideoChannel, channel_id: u32) {
+        Self::send_many(self, datagrams, channel, channel_id);
     }
 }
 
@@ -503,30 +537,60 @@ impl Inner {
     }
 
     fn send(&self, datagram: &[u8], channel: VideoChannel, channel_id: u32) {
+        self.send_many(&mut core::iter::once(datagram), channel, channel_id);
+    }
+
+    /// The peer a lane's replies go to, or `None` for a lane with no flow stamped yet.
+    fn peer_of(&self, is_media: bool, channel_id: u32) -> Option<SocketAddr> {
+        let state = self.locked();
+        let flow = if is_media {
+            state.flows.media_reply_flow(channel_id)
+        } else {
+            state.flows.cursor_reply_flow(channel_id)
+        };
+        flow.and_then(|flow| state.peers.peer(flow))
+    }
+
+    /// A run of datagrams to one lane on one channel: the peer looked up once, each datagram framed
+    /// and sent.
+    fn send_many(&self, datagrams: &mut dyn Iterator<Item = &[u8]>, channel: VideoChannel, channel_id: u32) {
         // `docs/20` §9.1: the cursor channel is the ONE that rides its own socket; every other
         // channel is a tagged datagram on the media socket.
         let is_media = !matches!(channel, VideoChannel::Cursor);
-        let peer = {
-            let state = self.locked();
-            let flow = if is_media {
-                state.flows.media_reply_flow(channel_id)
-            } else {
-                state.flows.cursor_reply_flow(channel_id)
-            };
-            flow.and_then(|flow| state.peers.peer(flow))
-        };
-        let Some(peer) = peer else {
+        let Some(peer) = self.peer_of(is_media, channel_id) else {
             return;
         };
-        // One allocation: the payload bytes are appended exactly once, producing the same wire
-        // bytes a naive inner `[tag][payload]` buffer plus a prefix encode would.
-        let framed = if is_media {
-            mux_header::encode_media(channel_id, channel.raw_value(), datagram)
-        } else {
-            mux_header::encode(channel_id, datagram)
-        };
         let socket = if is_media { &self.media } else { &self.cursor };
-        if let Err(error) = socket.send_to(&framed, peer) {
+        for datagram in datagrams {
+            // One allocation: the payload bytes are appended exactly once, producing the same wire
+            // bytes a naive inner `[tag][payload]` buffer plus a prefix encode would.
+            let framed = if is_media {
+                mux_header::encode_media(channel_id, channel.raw_value(), datagram)
+            } else {
+                mux_header::encode(channel_id, datagram)
+            };
+            self.send_framed(socket, &framed, peer, channel, channel_id);
+        }
+    }
+
+    /// One `send_to`, retried ONCE after a yield: the interface queue answers a keyframe burst
+    /// with `ENOBUFS`, and a datagram dropped there was, before this, gone in silence — with FEC at
+    /// one parity per group, two such drops in a group cost the client a recovery IDR. A second
+    /// refusal is counted so the host's own drops are observable.
+    fn send_framed(
+        &self,
+        socket: &UdpSocket,
+        framed: &[u8],
+        peer: SocketAddr,
+        channel: VideoChannel,
+        channel_id: u32,
+    ) {
+        if socket.send_to(framed, peer).is_ok() {
+            return;
+        }
+        std::thread::yield_now();
+        if let Err(error) = socket.send_to(framed, peer) {
+            self.send_failures.fetch_add(1, Ordering::Relaxed);
             note(&format!(
                 "mux send failed channel={} lane={channel_id}: {error}",
                 channel.raw_value()

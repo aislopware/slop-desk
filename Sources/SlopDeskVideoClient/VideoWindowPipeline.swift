@@ -959,6 +959,7 @@ package final class VideoWindowPipeline {
         scrollPhase: UInt8 = 0,
         momentumPhase: UInt8 = 0,
         continuous: Bool = false,
+        modifiers: InputModifiers = [],
     ) {
         guard let session else { return }
         submitFlushingMotion {
@@ -969,6 +970,7 @@ package final class VideoWindowPipeline {
                 scrollPhase: scrollPhase,
                 momentumPhase: momentumPhase,
                 continuous: continuous,
+                modifiers: modifiers,
             )
         }
     }
@@ -1005,9 +1007,11 @@ package final class VideoWindowPipeline {
         }
     }
 
-    package func key(keyCode: UInt16, down: Bool, modifiers: InputModifiers) {
+    package func key(keyCode: UInt16, down: Bool, isRepeat: Bool = false, modifiers: InputModifiers) {
         guard let session else { return }
-        submitFlushingMotion { await session.sendKey(keyCode: keyCode, down: down, modifiers: modifiers) }
+        submitFlushingMotion {
+            await session.sendKey(keyCode: keyCode, down: down, isRepeat: isRepeat, modifiers: modifiers)
+        }
     }
 
     func text(_ string: String) {

@@ -32,6 +32,13 @@ pub trait LaneControl: Send + Sync + core::fmt::Debug {
     fn retire(&self, channel_id: u32);
     /// Sends one datagram for a lane, framed and on the socket its channel rides.
     fn send(&self, datagram: &[u8], channel: VideoChannel, channel_id: u32);
+    /// Sends a run of datagrams for a lane on one channel. The default is one `send` each; the
+    /// transport overrides it to resolve the peer once for the run.
+    fn send_many(&self, datagrams: &mut dyn Iterator<Item = &[u8]>, channel: VideoChannel, channel_id: u32) {
+        for datagram in datagrams {
+            self.send(datagram, channel, channel_id);
+        }
+    }
 }
 
 /// What a lane tells when it retires ITSELF — a `bye`, or a session stopping.
@@ -91,6 +98,11 @@ impl MuxLaneTransport {
     /// Sends one datagram on this lane.
     pub fn send(&self, datagram: &[u8], channel: VideoChannel) {
         self.shared.send(datagram, channel, self.channel_id);
+    }
+
+    /// Sends a run of datagrams on this lane and one channel, the peer resolved once for the run.
+    pub fn send_many(&self, datagrams: &mut dyn Iterator<Item = &[u8]>, channel: VideoChannel) {
+        self.shared.send_many(datagrams, channel, self.channel_id);
     }
 
     /// The session is stopping.

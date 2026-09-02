@@ -398,7 +398,7 @@ fn xor_length_prefixed(member: &[u8], acc: &mut [u8]) {
 }
 
 /// The `[u32 BE len]` header every shard carries into the code.
-const PREFIX_BYTES: usize = 4;
+pub(crate) const PREFIX_BYTES: usize = 4;
 
 /// `[u32 BE len][bytes]`. A fragment never approaches 4 GiB (it is MTU-bounded), so the `u32` holds
 /// by construction. Both the XOR and the Cauchy path operate over this framed, zero-padded encoding

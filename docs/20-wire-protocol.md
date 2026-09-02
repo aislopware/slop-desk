@@ -654,9 +654,18 @@ lifecycle instead of `hello`/`helloAck`: `channelOpen` carries `[sessionID][last
 here: `0` = fresh shell (PATH B/C — the client resets its seq marks), `> 0` = the SAME live
 session reattached (PATH A) and replay starts after this seq (the client keeps its marks). The
 decoder tolerates the field's absence (a 1-byte legacy body) as `0`. The host sends the ack on
-the DATA link **before** the replay, so the verdict arrives FIFO-ahead of the first replayed
-byte; `MuxClientTransport.connect` awaits it (bounded by `handshakeTimeout`) and a refusal or
-timeout throws instead of leaving a silently-dead channel.
+the DATA link **before** any `output` — before the replay on a reattach, and before it starts the
+drain on a fresh spawn, whose restored transcript would otherwise be FIFO-ahead of the verdict it
+needs. The client's connect awaits the ack (bounded by `handshakeTimeout`) and a refusal or
+timeout fails instead of leaving a silently-dead channel.
+
+> **Rule: `output` that reaches the client ahead of the ack's adoption is STAGED, not folded.**
+> The forwarder that decodes the ack does not wait for the connect to adopt it, so the `output`
+> frame behind the ack on the same socket can be decoded first. Folded then, it would be judged
+> against the previous connection's marks and verdict, credited to no transport, and have its
+> credit zeroed by the reset the ack brings — a restore the size of one window (64 KiB) wedges
+> the pane. `slopdesk-clientdriver` holds such frames until adoption and feeds them, in order,
+> through the marks the ack settled; `tests/preack.rs` is the pin.
 
 **Snapshot replay (state-transfer):** with `SLOPDESK_SCROLLBACK_SNAPSHOT` ON (default), a cold
 reattach (`lastReceivedSeq == 0`) — and a warm one whose pending replay exceeds
@@ -955,13 +964,17 @@ media flows. `[UInt8 type][body]`, big-endian:
 
 An encoded HEVC frame (AVCC: length-prefixed NAL units, with the IDR carrying inline VPS/SPS/PPS — the
 client self-configures its `CMVideoFormatDescription` from those parameter sets, no out-of-band
-parameter exchange) is fragmented into datagrams ≤ **1200 bytes** (`VideoPacketizer.maxDatagramSize`,
-doc 17 §3.6 — under the runtime MTU including WireGuard-mesh overhead).
+parameter exchange) is fragmented into datagrams ≤ **1200 bytes** (`fragment::MAX_DATAGRAM_SIZE`,
+doc 17 §3.6 — under the runtime MTU including WireGuard-mesh overhead). A data payload is at most
+**1177 bytes** (`MAX_PAYLOAD_SIZE` = 1200 − 19 header − 4): a parity shard is the width of its
+group's widest LENGTH-PREFIXED member, so the parity datagram of a full data fragment is the widest
+a frame produces, and the budget is taken from it — a 1181-byte data payload would put its parity
+at 1204.
 
 **Fragment header — fixed 19 bytes, big-endian:**
 
 ```
-off 0: UInt32 streamSeq        — monotonic per-datagram sequence (loss / ordering)
+off 0: UInt32 streamSeq        — per-datagram counter in packetize order (informational)
 off 4: UInt32 frameID          — groups all fragments of one encoded frame
 off 8: UInt16 fragIndex        — 0-based fragment index within the frame
 off10: UInt16 fragCount        — total fragments in the frame (data + parity)
@@ -974,9 +987,11 @@ off17: UInt16 payloadLen       — payload byte count that follows
 off19: [payloadLen] bytes      — fragment payload (AVCC bytes, or FEC parity)
 ```
 
-`streamSeq` is a monotonic per-**datagram** index (every emitted datagram, data and parity alike,
-increments it) — the loss/ordering signal, analogous to PATH 1's per-message `output.seq` but at
-datagram granularity. `frameID` is a monotonic per-**frame** index. `flags` bits: `keyframe` (fresh
+`streamSeq` is a per-**datagram** counter (every emitted datagram, data and parity alike, increments
+it) stamped in PACKETIZE order — data then parity — which is NOT send order once the default-on
+interleaver has permuted the frame, so within a frame it is non-monotonic on the wire. It is
+informational: loss and order are tracked by `frameID`/`fragIndex`, and the `ack` control arm that
+names a `streamSeq` field actually carries a `frameID`. `frameID` is a monotonic per-**frame** index. `flags` bits: `keyframe` (fresh
 decode anchor / IDR), `parity` (this fragment is FEC parity, not original data), `crisp` (the frame
 came from the on-demand all-intra "crisp" Session-B encoder), `fecTier` (3-bit loss-adaptive parity
 tier echo), `isLTR` (long-term-reference frame), `ackedAnchored` (delta anchored on an acked LTR).
@@ -1016,7 +1031,10 @@ so it composites client-side at RTT latency (doc 17 §3.3). Both messages travel
 cursor socket as **bare bytes**, told apart by their leading type byte (`CursorChannelMessage` peeks
 the first byte to route):
 
-**`CursorUpdate` (type `1`) — hot, position-only, fixed 36 bytes (< 64-byte budget), ~120 Hz:**
+**`CursorUpdate` (type `1`) — hot, position-only, fixed 36 bytes (< 64-byte budget). Sampled at ~120 Hz
+and sent only when the position, the visibility or the `shapeID` changed since the last one, plus one
+keep-alive a second while the pointer rests (`slopdesk-videohostd`'s `cursor.rs`): the client keeps the
+last update until told otherwise and times nothing out, so a resting pointer costs the wire nothing.**
 
 ```
 off 0: UInt8   type (=1)
@@ -1094,12 +1112,19 @@ geometry watchers and avoids feedback loops (doc 18 §A). `[UInt8 type][body]`, 
 | `1` | `mouseMove` | `UInt32 tag` + `Float64 nx` + `ny` |
 | `2` | `mouseDown` | `UInt32 tag` + `UInt8 button` + `UInt8 clickCount` + `UInt8 modifiers` + `Float64 nx` + `ny` |
 | `3` | `mouseUp`   | *(same layout as `mouseDown`)* |
-| `4` | `scroll`    | `UInt32 tag` + `Float64 dx` + `dy` + `Float64 nx` + `ny` |
-| `5` | `key`       | `UInt32 tag` + `UInt16 keyCode` + `UInt8 down(0/1)` + `UInt8 modifiers` |
+| `4` | `scroll`    | `UInt32 tag` + `Float64 dx` + `dy` + `Float64 nx` + `ny` + `UInt8 scrollPhase` + `UInt8 momentumPhase` + `UInt8 continuous` + `UInt8 modifiers` |
+| `5` | `key`       | `UInt32 tag` + `UInt16 keyCode` + `UInt8 state` (bit 0 down, bit 1 autorepeat) + `UInt8 modifiers` |
 | `6` | `text`      | `UInt32 tag` + remaining bytes = UTF-8 text |
 
 `button`: `0` left / `1` right / `2` other. `modifiers` bitmask: `shift 1<<0`, `control 1<<1`,
-`option 1<<2`, `command 1<<3`, `capsLock 1<<4`, `function 1<<5`. `key` is for navigation / shortcuts
+`option 1<<2`, `command 1<<3`, `capsLock 1<<4`, `function 1<<5`. A `scroll`'s `scrollPhase` and
+`momentumPhase` are the CoreGraphics codes verbatim (at most one non-zero), `continuous` mirrors
+`hasPreciseScrollingDeltas`, and its trailing `modifiers` byte is the newest field — a decoder that
+finds the datagram ending before it reads an unmodified wheel. A `key`'s `state` bit 1 marks a held-key
+autorepeat; the host stamps `kCGKeyboardEventAutorepeat` on its synthetic event. A `scroll`'s `nx`/`ny` are where the
+gesture happened, and the host PUTS the pointer there before posting the wheel when it is not already
+within half a point: a wheel event carries no location of its own, so without the settle a scroll over
+a background pane would land on whichever window the pointer last hovered. `key` is for navigation / shortcuts
 by host virtual keycode; `text` is the robust layout-independent Unicode-insertion path (doc 05 §3) —
 the host attaches the unicode string to the key-**down** only.
 

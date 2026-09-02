@@ -1939,6 +1939,7 @@ public actor SlopDeskVideoClientSession {
         scrollPhase: UInt8 = 0,
         momentumPhase: UInt8 = 0,
         continuous: Bool = false,
+        modifiers: InputModifiers = [],
     ) {
         sendInput(inputEncoder.scroll(
             dx: dx,
@@ -1949,6 +1950,7 @@ public actor SlopDeskVideoClientSession {
             scrollPhase: scrollPhase,
             momentumPhase: momentumPhase,
             continuous: continuous,
+            modifiers: modifiers,
             zoom: zoom,
             pan: pan,
             mode: contentMode,
@@ -1956,7 +1958,7 @@ public actor SlopDeskVideoClientSession {
         ))
     }
 
-    public func sendKey(keyCode: UInt16, down: Bool, modifiers: InputModifiers) {
+    public func sendKey(keyCode: UInt16, down: Bool, isRepeat: Bool = false, modifiers: InputModifiers) {
         // Build ONCE, send `keySendCount` times: a MODIFIER key-up gets the same
         // loss-resilient redundancy as `sendMouseUp` — a lost modifier release permanently latches
         // the flag on the host's shared `hidSystemState` source (every later plain scroll becomes
@@ -1965,7 +1967,7 @@ public actor SlopDeskVideoClientSession {
         // duplicates, so
         // the redundancy never becomes a spurious extra modifier edge. Everything else stays a
         // single datagram (an ordinary key-up loss is a visible, self-healing miss).
-        let event = inputEncoder.key(keyCode: keyCode, down: down, modifiers: modifiers)
+        let event = inputEncoder.key(keyCode: keyCode, down: down, isRepeat: isRepeat, modifiers: modifiers)
         sendInput(event, times: Self.keySendCount(keyCode: keyCode, down: down))
     }
 

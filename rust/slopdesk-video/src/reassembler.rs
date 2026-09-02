@@ -39,7 +39,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::adaptive_fec;
 use crate::fec::ReedSolomonFec;
-use crate::fragment::{Flags, FrameFragment};
+use crate::fragment::{Flags, FrameFragment, HEADER_SIZE, MAX_DATAGRAM_SIZE};
 
 /// Upper bound on a frame's declared fragment count — a hostile-input guard.
 ///
@@ -500,9 +500,16 @@ impl FrameReassembler {
         // rejected BEFORE any per-frame buffer exists. A crafted `frag_count` makes
         // assembly build and iterate a `data_count`-sized array per frame, and `frag_index
         // >= frag_count` can never complete.
+        // The payload is bounded by the DATAGRAM budget, not by the 64 KiB read window: every other
+        // guard here bounds counts, and without this one a frame declaring the maximum fragment
+        // count at the maximum datagram size would be held at half a gibibyte until the frontier
+        // swept it. The bound is the widest payload a datagram inside the budget can carry — a
+        // parity shard is `MAX_PAYLOAD_SIZE` plus its length prefix — so the honest path is
+        // byte-identical.
         if header.frag_count == 0
             || usize::from(header.frag_count) > MAX_FRAGMENTS_PER_FRAME
             || header.frag_index >= header.frag_count
+            || fragment.payload.len() > MAX_DATAGRAM_SIZE - HEADER_SIZE
         {
             return ReassemblyResult::Stale;
         }
@@ -801,7 +808,9 @@ mod tests {
         ReassemblyResult, distance_wrapped, inverted_data_count,
     };
     use crate::fec::ReedSolomonFec;
-    use crate::fragment::FrameFragment;
+    use crate::fragment::{
+        Flags, FrameFragment, FrameFragmentHeader, HEADER_SIZE, MAX_DATAGRAM_SIZE, MAX_PAYLOAD_SIZE,
+    };
     use crate::packetizer::{PacketizeOptions, VideoPacketizer};
 
     /// The frontier bound as a `frame_id` offset.
@@ -884,7 +893,7 @@ mod tests {
 
     #[test]
     fn one_lost_data_fragment_per_group_is_repaired_from_parity() {
-        let frame = frame_of(1181 * 6);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 6);
         let codec = ReedSolomonFec::default();
         let fragments = packetized(&frame, Some(codec), PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(Some(codec), 2);
@@ -904,7 +913,7 @@ mod tests {
 
     #[test]
     fn two_losses_in_one_group_are_not_repairable_and_the_frame_drops() {
-        let frame = frame_of(1181 * 6);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 6);
         let codec = ReedSolomonFec::default();
         let fragments = packetized(&frame, Some(codec), PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(Some(codec), 0);
@@ -931,7 +940,7 @@ mod tests {
     fn a_frame_waiting_only_on_parity_gets_the_reorder_grace() {
         // The packetizer emits parity LAST, so frame N's parity commonly lands after frame N+1's
         // data. Without the grace that ordering alone would look like loss.
-        let frame = frame_of(1181 * 3);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 3);
         let codec = ReedSolomonFec::default();
         let fragments = packetized(&frame, Some(codec), PacketizeOptions::default());
         let data_count = fragments.len() - 1;
@@ -954,7 +963,7 @@ mod tests {
 
     #[test]
     fn the_grace_expires_and_the_frame_is_declared_lost() {
-        let frame = frame_of(1181 * 3);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 3);
         let codec = ReedSolomonFec::default();
         let fragments = packetized(&frame, Some(codec), PacketizeOptions::default());
         let data_count = fragments.len() - 1;
@@ -1025,7 +1034,7 @@ mod tests {
     fn a_fragment_disagreeing_about_the_fragment_count_is_dropped_not_believed() {
         // A shrunk count would move the boundary below buffered data and declare the frame complete
         // while real data is missing — corrupt decoder input AND a suppressed recovery signal.
-        let frame = frame_of(1181 * 3);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 3);
         let fragments = packetized(&frame, None, PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(None, 2);
         reassembler.ingest(fragments[0].clone());
@@ -1114,7 +1123,7 @@ mod tests {
 
     #[test]
     fn a_small_unrecoverable_loss_is_nacked_and_held() {
-        let frame = frame_of(1181 * 6);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 6);
         let codec = ReedSolomonFec::default();
         let fragments = packetized(&frame, Some(codec), PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(Some(codec), 0);
@@ -1140,7 +1149,7 @@ mod tests {
 
     #[test]
     fn a_loss_too_big_to_nack_drops_promptly_instead_of_stalling() {
-        let frame = frame_of(1181 * 6);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 6);
         let codec = ReedSolomonFec::default();
         let fragments = packetized(&frame, Some(codec), PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(Some(codec), 0);
@@ -1160,12 +1169,12 @@ mod tests {
 
     #[test]
     fn the_nack_never_asks_for_parity() {
-        let frame = frame_of(1181 * 6);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 6);
         let codec = ReedSolomonFec::default();
         let fragments = packetized(&frame, Some(codec), PacketizeOptions::default());
         let data_count = fragments
             .iter()
-            .filter(|fragment| !fragment.header.flags.contains(crate::fragment::Flags::PARITY))
+            .filter(|fragment| !fragment.header.flags.contains(Flags::PARITY))
             .count();
         let mut reassembler = FrameReassembler::new(Some(codec), 0);
         reassembler.enable_retransmit(4, 64);
@@ -1184,8 +1193,21 @@ mod tests {
     }
 
     #[test]
+    fn an_oversized_payload_is_stale_rather_than_held() {
+        // A peer on the mesh, not the host: the packetizer never writes a payload past its own
+        // ceiling, so a wider one is refused before any per-frame buffer exists.
+        let mut reassembler = FrameReassembler::new(None, 0);
+        let header = FrameFragmentHeader::new(0, 7, 0, 2, Flags::default(), 0, 0);
+        let widest = MAX_DATAGRAM_SIZE - HEADER_SIZE;
+        let wide = FrameFragment::new(header, vec![0xAB; widest + 1]);
+        assert_eq!(reassembler.ingest(wide), ReassemblyResult::Stale);
+        let exact = FrameFragment::new(header, vec![0xAB; widest]);
+        assert_eq!(reassembler.ingest(exact), ReassemblyResult::Incomplete);
+    }
+
+    #[test]
     fn the_off_tier_carries_no_parity_and_any_hole_is_terminal() {
-        let frame = frame_of(1181 * 4);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 4);
         let codec = ReedSolomonFec::default();
         let options = PacketizeOptions {
             fec_tier: 1,
@@ -1206,7 +1228,7 @@ mod tests {
 
     #[test]
     fn every_group_size_tier_round_trips_through_both_ends() {
-        let frame = frame_of(1181 * 7 + 33);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 7 + 33);
         let codec = ReedSolomonFec::default();
         for tier in [0_u8, 2, 3, 4] {
             let options = PacketizeOptions {
@@ -1227,7 +1249,7 @@ mod tests {
 
     #[test]
     fn a_multi_loss_codec_repairs_up_to_m_holes_per_group() {
-        let frame = frame_of(1181 * 5);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 5);
         let codec = ReedSolomonFec::new(5, 3);
         let fragments = packetized(&frame, Some(codec), PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(Some(codec), 2);
@@ -1245,7 +1267,7 @@ mod tests {
 
     #[test]
     fn the_frame_flags_latch_from_whichever_fragment_carries_them() {
-        let frame = frame_of(1181 * 3);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 3);
         let options = PacketizeOptions {
             crisp: true,
             is_ltr: true,
@@ -1292,7 +1314,7 @@ mod tests {
 
     #[test]
     fn a_frame_completes_across_the_frame_id_wrap() {
-        let frame = frame_of(1181 * 3);
+        let frame = frame_of(MAX_PAYLOAD_SIZE * 3);
         let fragments = packetized(&frame, None, PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(None, 2);
         // The last frame before the wrap, then the first after it.

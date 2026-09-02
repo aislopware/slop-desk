@@ -242,6 +242,10 @@ pub(crate) enum DecodeKey {
     MetalCompatibility,
     /// `kCVPixelBufferIOSurfacePropertiesKey`.
     IoSurfaceProperties,
+    /// `kCVPixelBufferWidthKey`.
+    Width,
+    /// `kCVPixelBufferHeightKey`.
+    Height,
 }
 
 impl DecodeKey {
@@ -265,6 +269,8 @@ impl DecodeKey {
                 Self::PixelFormatType => cv::kCVPixelBufferPixelFormatTypeKey,
                 Self::MetalCompatibility => cv::kCVPixelBufferMetalCompatibilityKey,
                 Self::IoSurfaceProperties => cv::kCVPixelBufferIOSurfacePropertiesKey,
+                Self::Width => cv::kCVPixelBufferWidthKey,
+                Self::Height => cv::kCVPixelBufferHeightKey,
             }
         }
     }

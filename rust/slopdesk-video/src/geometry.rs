@@ -46,7 +46,7 @@ pub fn ordered_clamp(value: f64, lo: f64, hi: f64) -> f64 {
 }
 
 /// A pure 2-D point (host space, points).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct VideoPoint {
     /// Horizontal coordinate.
     pub x: f64,

@@ -73,6 +73,8 @@ pub struct SlopDeskInputEvent {
     pub continuous: bool,
     /// Whether the key went down.
     pub down: bool,
+    /// Whether the key edge is a held-key autorepeat.
+    pub autorepeat: bool,
     /// Where the UTF-8 text starts in the datagram, for the text arm. 0 everywhere else.
     pub text_offset: u8,
 }
@@ -138,10 +140,12 @@ pub(crate) fn flatten(event: &InputEvent) -> SlopDeskInputEvent {
             flat.scroll_phase = event.scroll_phase;
             flat.momentum_phase = event.momentum_phase;
             flat.continuous = event.continuous;
+            flat.modifiers = event.modifiers.bits();
         },
         InputEvent::Key(event, _) => {
             flat.key_code = event.key_code;
             flat.down = event.down;
+            flat.autorepeat = event.repeat;
             flat.modifiers = event.modifiers.bits();
         },
         // The text stays in the caller's datagram: it starts after the type byte and the tag, and
@@ -218,6 +222,7 @@ pub(crate) fn rebuild(event: SlopDeskInputEvent, text: &[u8]) -> Option<InputEve
                     scroll_phase: event.scroll_phase,
                     momentum_phase: event.momentum_phase,
                     continuous: event.continuous,
+                    modifiers,
                 },
                 event.tag,
             ))
@@ -227,6 +232,7 @@ pub(crate) fn rebuild(event: SlopDeskInputEvent, text: &[u8]) -> Option<InputEve
                 KeyEvent {
                     key_code: event.key_code,
                     down: event.down,
+                    repeat: event.autorepeat,
                     modifiers,
                 },
                 event.tag,
@@ -348,10 +354,27 @@ mod tests {
             scroll_phase: 2,
             momentum_phase: 1,
             continuous: true,
+            modifiers: 0b1000,
             ..SlopDeskInputEvent::default()
         };
         let (back, _wire) = round_trip(event, &[]);
         assert_eq!(back, event);
+    }
+
+    #[test]
+    fn a_key_carries_its_autorepeat_bit() {
+        let event = SlopDeskInputEvent {
+            tag: 3,
+            message_type: 5,
+            key_code: 0x35,
+            down: true,
+            autorepeat: true,
+            modifiers: 0b0100,
+            ..SlopDeskInputEvent::default()
+        };
+        let (back, wire) = round_trip(event, &[]);
+        assert_eq!(back, event);
+        assert_eq!(wire.get(7), Some(&0b11), "bit 0 down, bit 1 repeat");
     }
 
     #[test]

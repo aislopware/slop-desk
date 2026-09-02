@@ -745,6 +745,7 @@ mod tests {
                 scroll_phase: phase,
                 momentum_phase: momentum,
                 continuous: true,
+                modifiers: InputModifiers::default(),
             },
             0,
         )
@@ -755,6 +756,7 @@ mod tests {
             KeyEvent {
                 key_code,
                 down: is_down,
+                repeat: false,
                 modifiers: InputModifiers::default(),
             },
             0,

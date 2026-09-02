@@ -146,7 +146,7 @@ pub struct MouseButtonEvent {
 }
 
 /// The scroll payload.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ScrollEvent {
     /// Signed horizontal scroll delta, pixel units.
     pub dx: f64,
@@ -162,6 +162,8 @@ pub struct ScrollEvent {
     /// Mirrors `hasPreciseScrollingDeltas`: a pixel-precise trackpad gesture rather than a wheel
     /// tick.
     pub continuous: bool,
+    /// Held modifiers, so a ⌘-wheel zoom or ⇧-wheel horizontal pan lands as one on the host.
+    pub modifiers: InputModifiers,
 }
 
 /// The key payload.
@@ -171,6 +173,8 @@ pub struct KeyEvent {
     pub key_code: u16,
     /// Down (`true`) or up.
     pub down: bool,
+    /// A held-key autorepeat — `NSEvent.isARepeat` — so the host's synthetic event says so too.
+    pub repeat: bool,
     /// Held modifiers.
     pub modifiers: InputModifiers,
 }
@@ -254,10 +258,11 @@ impl InputEvent {
                 out.put_u8(event.scroll_phase);
                 out.put_u8(event.momentum_phase);
                 out.put_u8(u8::from(event.continuous));
+                out.put_u8(event.modifiers.bits());
             },
             Self::Key(event, _) => {
                 out.put_u16(event.key_code);
-                out.put_u8(u8::from(event.down));
+                out.put_u8(u8::from(event.down) | (u8::from(event.repeat) << 1));
                 out.put_u8(event.modifiers.bits());
             },
             Self::Text(ref text, _) => out.put_bytes(text.as_bytes()),
@@ -312,6 +317,12 @@ impl InputEvent {
                 let scroll_phase = reader.read_u8()?;
                 let momentum_phase = reader.read_u8()?;
                 let continuous = reader.read_u8()? != 0;
+                // The modifiers byte is the newest field; a sender from before it simply
+                // scrolls unmodified.
+                let modifiers = reader
+                    .remaining()
+                    .first()
+                    .map_or_else(InputModifiers::default, |bits| InputModifiers::from_bits(*bits));
                 Ok(Self::Scroll(
                     ScrollEvent {
                         dx,
@@ -320,18 +331,20 @@ impl InputEvent {
                         scroll_phase,
                         momentum_phase,
                         continuous,
+                        modifiers,
                     },
                     tag,
                 ))
             },
             5 => {
                 let key_code = reader.read_u16()?;
-                let down = reader.read_u8()? != 0;
+                let state = reader.read_u8()?;
                 let modifiers = InputModifiers::from_bits(reader.read_u8()?);
                 Ok(Self::Key(
                     KeyEvent {
                         key_code,
-                        down,
+                        down: state & 1 != 0,
+                        repeat: state & 2 != 0,
                         modifiers,
                     },
                     tag,
@@ -437,6 +450,7 @@ mod tests {
                     scroll_phase: 2,
                     momentum_phase: 0,
                     continuous: true,
+                    modifiers: InputModifiers::COMMAND,
                 },
                 10,
             ),
@@ -444,6 +458,7 @@ mod tests {
                 KeyEvent {
                     key_code: 53,
                     down: true,
+                    repeat: true,
                     modifiers: InputModifiers::OPTION,
                 },
                 11,
@@ -500,6 +515,7 @@ mod tests {
                 scroll_phase: 0,
                 momentum_phase: 0,
                 continuous: false,
+                modifiers: InputModifiers::default(),
             },
             1,
         );
@@ -520,6 +536,29 @@ mod tests {
     }
 
     #[test]
+    fn a_scroll_from_before_the_modifiers_byte_still_decodes_unmodified() {
+        let event = InputEvent::Scroll(
+            ScrollEvent {
+                dx: 1.0,
+                dy: -2.0,
+                normalized: VideoPoint::new(0.5, 0.5),
+                scroll_phase: 2,
+                momentum_phase: 0,
+                continuous: true,
+                modifiers: InputModifiers::SHIFT,
+            },
+            3,
+        );
+        let mut bytes = event.encode();
+        bytes.pop();
+        let decoded = InputEvent::decode(&bytes).expect("the old shape decodes");
+        assert!(matches!(
+            decoded,
+            InputEvent::Scroll(scroll, 3) if scroll.modifiers == InputModifiers::default() && scroll.continuous
+        ));
+    }
+
+    #[test]
     fn a_truncated_datagram_is_truncated_not_malformed() {
         assert_eq!(InputEvent::decode(&[1, 0, 0]), Err(VideoProtocolError::Truncated));
     }
@@ -531,6 +570,7 @@ mod tests {
             KeyEvent {
                 key_code: 1,
                 down: false,
+                repeat: false,
                 modifiers: exotic,
             },
             0,

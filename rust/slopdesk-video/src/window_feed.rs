@@ -66,30 +66,37 @@ impl WindowFeedAssembler {
         chunk_count: u8,
         records: Vec<HostWindowRecord>,
     ) -> Option<CompleteSnapshot> {
-        let mut partial = if let Some(existing) = self.partials.get(&generation) {
-            if existing.chunk_count != chunk_count {
-                self.discard(generation);
-                return None;
-            }
-            existing.clone()
-        } else {
+        // In place, as `blob.rs`'s assembler folds: cloning the partial out and back would copy
+        // every record received so far on each chunk.
+        if self
+            .partials
+            .get(&generation)
+            .is_some_and(|existing| existing.chunk_count != chunk_count)
+        {
+            self.discard(generation);
+            return None;
+        }
+        if !self.partials.contains_key(&generation) {
             if self.partials.len() >= Self::MAX_PARTIAL_GENERATIONS
                 && let Some(&oldest) = self.insertion_order.first()
             {
                 self.discard(oldest);
             }
             self.insertion_order.push(generation);
-            Partial {
+            self.partials.insert(generation, Partial {
                 chunk_count,
                 received: BTreeMap::new(),
-            }
+            });
+        }
+        let complete = {
+            let partial = self.partials.get_mut(&generation)?;
+            partial.received.insert(chunk_index, records);
+            partial.received.len() == usize::from(chunk_count)
         };
-
-        partial.received.insert(chunk_index, records);
-        if partial.received.len() != usize::from(chunk_count) {
-            self.partials.insert(generation, partial);
+        if !complete {
             return None;
         }
+        let partial = self.partials.remove(&generation)?;
         self.discard(generation);
 
         let mut assembled = Vec::new();

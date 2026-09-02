@@ -1114,6 +1114,7 @@ public struct InputEventEncoder: Sendable {
         scrollPhase: UInt8 = 0,
         momentumPhase: UInt8 = 0,
         continuous: Bool = false,
+        modifiers: InputModifiers = [],
         zoom: Double = 1,
         pan: VideoPoint = VideoPoint(x: 0, y: 0),
         mode: VideoContentMode = .fit,
@@ -1135,12 +1136,18 @@ public struct InputEventEncoder: Sendable {
             scrollPhase: scrollPhase,
             momentumPhase: momentumPhase,
             continuous: continuous,
+            modifiers: modifiers,
             tag: takeTag(),
         )
     }
 
-    public mutating func key(keyCode: UInt16, down: Bool, modifiers: InputModifiers) -> InputEvent {
-        .key(keyCode: keyCode, down: down, modifiers: modifiers, tag: takeTag())
+    public mutating func key(
+        keyCode: UInt16,
+        down: Bool,
+        isRepeat: Bool = false,
+        modifiers: InputModifiers,
+    ) -> InputEvent {
+        .key(keyCode: keyCode, down: down, isRepeat: isRepeat, modifiers: modifiers, tag: takeTag())
     }
 
     public mutating func text(_ string: String) -> InputEvent {

@@ -1004,6 +1004,33 @@ final class MacMetalLayerBackedView: NSView {
         pipeline.mouseUp(.right, viewPoint(event), LocalInputPolicy.clampClickCount(event.clickCount), mods(event))
     }
 
+    // THE MIDDLE BUTTON, which AppKit delivers under `otherMouse*` and nothing inherits: without these
+    // three overrides a middle click walks up the responder chain and vanishes, and the wire's third
+    // button — open-in-new-tab, paste-selection in a terminal, pan in a canvas — never fires on the
+    // host. The activation and raise rules are the right button's: a middle click orders no window
+    // front locally either. Every further button (`buttonNumber` ≥ 3) rides the same wire button, which
+    // is all the wire has for them.
+    override func otherMouseDown(with event: NSEvent) {
+        if !BackgroundPointerPolicy.backgroundClick(
+            backgroundPointer: backgroundPointer, windowIsKey: window?.isKeyWindow == true,
+        ) {
+            onActivate()
+        }
+        guard inputEnabled else { return } // read-only ⇒ activate only, no remote relay
+        if !isActive { pipeline.focusWindow() }
+        pipeline.mouseDown(.other, viewPoint(event), LocalInputPolicy.clampClickCount(event.clickCount), mods(event))
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        guard inputEnabled else { return } // read-only ⇒ no remote click
+        pipeline.mouseUp(.other, viewPoint(event), LocalInputPolicy.clampClickCount(event.clickCount), mods(event))
+    }
+
+    override func otherMouseDragged(with event: NSEvent) {
+        guard inputEnabled else { return } // read-only ⇒ no remote drag
+        pipeline.mouseDrag(.other, viewPoint(event), LocalInputPolicy.clampClickCount(event.clickCount), mods(event))
+    }
+
     /// Maps a finger-on-glass `NSEvent.phase` to its `CGScrollPhase` integer code so the host can set
     /// `kCGScrollWheelEventScrollPhase` verbatim.
     ///
@@ -1063,6 +1090,7 @@ final class MacMetalLayerBackedView: NSView {
                 scrollPhase: scrollPhase,
                 momentumPhase: momentumPhase,
                 continuous: event.hasPreciseScrollingDeltas,
+                modifiers: mods(event),
             )
             feedSwipePeel(event)
             return
@@ -1187,7 +1215,7 @@ final class MacMetalLayerBackedView: NSView {
     // not — the monitor already covers it. (Gated module: never instantiated in tests; verified by REVIEW.)
     override func keyDown(with event: NSEvent) {
         guard inputEnabled else { return } // read-only ⇒ no keycode forward
-        pipeline.key(keyCode: event.keyCode, down: true, modifiers: mods(event))
+        pipeline.key(keyCode: event.keyCode, down: true, isRepeat: event.isARepeat, modifiers: mods(event))
     }
 
     override func keyUp(with event: NSEvent) {
@@ -1318,7 +1346,10 @@ final class MacMetalLayerBackedView: NSView {
             stopEdgePan() // teardown — never leave a timer firing on a detached view
             // BUG-2: release any latched modifier + drop the resign-key observer before the view detaches, so
             // a torn-down pane never leaves the host with a stuck modifier or a stale window subscription.
+            // The buttons go with them: a pane torn out of its window mid-drag would otherwise leave the
+            // host tracking a button whose release will never arrive from this view.
             releaseLatchedModifiers()
+            if inputEnabled { liftAllButtons() }
             if let token = windowResignKeyObserver {
                 NotificationCenter.default.removeObserver(token)
                 windowResignKeyObserver = nil

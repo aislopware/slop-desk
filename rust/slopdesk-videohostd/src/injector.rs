@@ -56,7 +56,9 @@
 //! the shared state and exit when the handle drops its sender, which is what makes teardown a join
 //! rather than a cancel.
 
+use core::fmt;
 use std::io::Write as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -64,12 +66,13 @@ use std::time::{Duration, Instant};
 
 use slopdesk_apple_cgevent::{Button, PointerKind, PointerPost, ScrollPost};
 use slopdesk_apple_cgwindow::frontmost_pid;
+use slopdesk_video::client_gestures::{SCROLL_BEGAN, SCROLL_CHANGED, SCROLL_ENDED};
 use slopdesk_video::coordinate_mapping::window_point;
 use slopdesk_video::geometry::{VideoPoint, VideoRect};
 use slopdesk_video::injector_gates::{InjectorGateContext, InjectorGates, KEYS, SWIPE_NAV_TRACE_KEY};
-use slopdesk_video::input_event::{InputEvent, InputModifiers, MouseButton};
+use slopdesk_video::input_event::{InputEvent, InputModifiers, MouseButton, ScrollEvent};
 use slopdesk_video::input_routing::{InputButtonBalance, should_raise};
-use slopdesk_video::scroll_resample::ScrollResampler;
+use slopdesk_video::scroll_resample::{ScrollResampler, SubEvent};
 use slopdesk_video::swipe_nav::SwipeDirection;
 use slopdesk_video::swipe_nav_config::SwipeNavHostConfig;
 use slopdesk_video::swipe_recognizer::{
@@ -108,6 +111,16 @@ const KEY_RIGHT_COMMAND: u16 = 0x36;
 
 /// A nanosecond, in the units [`Duration::from_nanos`] takes — the resampler's interval divisor.
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
+
+/// How far, in CG points on either axis, a scroll's own position may sit from the last posted
+/// pointer before the pointer is moved there first.
+///
+/// A scroll wheel event carries no location of its own: the window server delivers it to whatever
+/// sits under the cursor AT POST TIME. The client sends the position the gesture happened at, and a
+/// pointer that was last placed by a different pane — or never placed, on the phone — would scroll
+/// the wrong window. Half a point is below anything a hover would have moved by, so a scroll that
+/// follows its own hover posts nothing extra.
+const SCROLL_SETTLE_POINTS: f64 = 0.5;
 
 /// One diagnostic line, on stderr, with the prefix every field log for this path already carries.
 ///
@@ -205,6 +218,14 @@ struct Core {
     /// The origin the recogniser's arrival clock counts from. Wire events carry no timestamps and
     /// the recogniser's budgets are sub-second, so arrival time is the clock it was designed for.
     clock: Instant,
+    /// Where the pointer was last PUT, in absolute CG points — every hover, edge and drag writes
+    /// it. A scroll, which carries no location of its own, is settled against this before it posts.
+    last_pointer: Mutex<Option<VideoPoint>>,
+    /// Whether a phased scroll gesture has begun and not yet ended. A teardown mid-gesture posts
+    /// the `ended` the client never got to send, so the target app leaves its scroll tracking.
+    scroll_open: AtomicBool,
+    /// Where every built event goes.
+    sink: Box<dyn PostsEvents>,
 }
 
 /// One unit of work for the scroll pump.
@@ -220,16 +241,8 @@ struct Core {
 enum ScrollJob {
     /// A forwarded wire scroll, to be folded into the resampler.
     Scroll {
-        /// Horizontal delta in points.
-        dx: f64,
-        /// Vertical delta in points.
-        dy: f64,
-        /// The CoreGraphics gesture phase.
-        scroll_phase: u8,
-        /// The CoreGraphics momentum phase.
-        momentum_phase: u8,
-        /// Whether the source gesture was precise rather than a wheel notch.
-        continuous: bool,
+        /// The wire event as it arrived; its modifiers are replayed onto every sub-event.
+        scroll: ScrollEvent,
         /// The self-inject stamp, replayed onto every sub-event the resampler emits.
         tag: u32,
     },
@@ -268,6 +281,46 @@ impl<T> Drop for Pump<T> {
 // ---------------------------------------------------------------------------------- //
 // Posting
 // ---------------------------------------------------------------------------------- //
+
+/// Where a built event goes: the window server in production, a ledger under test.
+///
+/// The seam sits UNDER every decision this module makes — the settle-before-scroll, the release on
+/// teardown, the bracketed chord — so a test can assert the exact sequence of posts those
+/// decisions produce without a window server to post to. Nothing is decided in an implementation
+/// of it: the production one is four straight calls into `slopdesk-apple-cgevent`, which keeps the
+/// `unsafe` where `docs/57` licenses it.
+pub(crate) trait PostsEvents: Send + Sync + fmt::Debug {
+    /// One pointer event, fully specified.
+    fn pointer(&self, post: &PointerPost);
+    /// One scroll event, fully specified.
+    fn scroll(&self, post: &ScrollPost);
+    /// One key edge, with its autorepeat flag and the wire's modifier bits.
+    fn key(&self, key_code: u16, down: bool, repeat: bool, modifiers: u8);
+    /// One string typed as Unicode, layout-independent.
+    fn text(&self, text: &str);
+}
+
+/// The production sink: the HID tap, through `slopdesk-apple-cgevent`.
+///
+/// A refused post is dropped here as it is everywhere on this path — the wire is fire-and-forget,
+/// and there is nobody to answer.
+#[derive(Clone, Copy, Debug, Default)]
+struct HidTap;
+
+impl PostsEvents for HidTap {
+    fn pointer(&self, post: &PointerPost) {
+        let _ = slopdesk_apple_cgevent::post_pointer(post);
+    }
+    fn scroll(&self, post: &ScrollPost) {
+        let _ = slopdesk_apple_cgevent::post_scroll(post);
+    }
+    fn key(&self, key_code: u16, down: bool, repeat: bool, modifiers: u8) {
+        let _ = slopdesk_apple_cgevent::post_key(key_code, down, repeat, modifiers);
+    }
+    fn text(&self, text: &str) {
+        let _ = slopdesk_apple_cgevent::post_text(text);
+    }
+}
 
 /// One pointer event's eight decisions, gathered so they cross as a value rather than as a
 /// same-typed argument list four booleans deep.
@@ -316,9 +369,25 @@ impl Core {
         }
     }
 
+    /// Where the pointer was last put, or the window's centre when nothing has placed it yet — a
+    /// point inside the capture, which is all a release or a settle needs of it.
+    fn pointer_or_centre(&self) -> VideoPoint {
+        let placed = self.last_pointer.lock().ok().and_then(|pointer| *pointer);
+        placed.unwrap_or_else(|| {
+            let frame = self.frame();
+            VideoPoint::new(
+                frame.origin.x + frame.size.width * 0.5,
+                frame.origin.y + frame.size.height * 0.5,
+            )
+        })
+    }
+
     /// One pointer event. Every field is a decision already made; this builds the spec and posts.
     fn post_pointer(&self, spec: PointerSpec) {
-        let _ = slopdesk_apple_cgevent::post_pointer(&PointerPost {
+        if let Ok(mut pointer) = self.last_pointer.lock() {
+            *pointer = Some(spec.at);
+        }
+        self.sink.pointer(&PointerPost {
             kind: spec.kind,
             button: match spec.button {
                 MouseButton::Right => Button::Right,
@@ -334,6 +403,26 @@ impl Core {
             tablet: spec.tablet,
             to_pid: self.deliver_to(),
         });
+    }
+
+    /// Puts the pointer where a scroll happened, when it is not already there.
+    ///
+    /// The window server posts a wheel event at the CURRENT cursor, whatever the client meant, and
+    /// only the active pane's hover moves that cursor: a background pane's scroll would otherwise
+    /// land on the active pane's window. One hover per gesture is exactly the round trip a local
+    /// user's own pointer makes on the way to the wheel, and a gesture that follows its own hover
+    /// is within [`SCROLL_SETTLE_POINTS`] of it and posts nothing more.
+    fn settle_pointer_for_scroll(&self, normalized: VideoPoint, tag: u32) {
+        let target = self.target(normalized);
+        let settled = self.last_pointer.lock().is_ok_and(|pointer| {
+            pointer.is_some_and(|placed| {
+                (placed.x - target.x).abs() < SCROLL_SETTLE_POINTS
+                    && (placed.y - target.y).abs() < SCROLL_SETTLE_POINTS
+            })
+        });
+        if !settled {
+            self.post_move(normalized, tag);
+        }
     }
 
     /// A pure HOVER move.
@@ -404,43 +493,46 @@ impl Core {
 
     /// ONE scroll event — the single emission point for both the direct path and the resampler's
     /// interpolated sub-events.
-    fn post_scroll(
-        &self,
-        dx: f64,
-        dy: f64,
-        scroll_phase: u8,
-        momentum_phase: u8,
-        continuous: bool,
-        tag: u32,
-    ) {
+    fn post_scroll(&self, scroll: &ScrollEvent, tag: u32) {
         let phased = self.gates.scroll_phase;
         // A precise gesture must NOT be re-scaled: the OS derives its inertial coast velocity from
         // the delta cadence, so a gain would desync the fling. Gain only means anything for a
         // legacy discrete wheel, so it is 1:1 whenever a real gesture is being replayed.
-        let gain = if phased && continuous {
+        let gain = if phased && scroll.continuous {
             1.0
         } else {
             self.gates.scroll_gain
         };
-        let _ = slopdesk_apple_cgevent::post_scroll(&ScrollPost {
-            dx,
-            dy,
+        self.sink.scroll(&ScrollPost {
+            dx: scroll.dx,
+            dy: scroll.dy,
             gain,
-            scroll_phase,
-            momentum_phase,
-            continuous,
+            scroll_phase: scroll.scroll_phase,
+            momentum_phase: scroll.momentum_phase,
+            continuous: scroll.continuous,
             phased,
+            modifiers: scroll.modifiers.bits(),
             tag,
             to_pid: self.deliver_to(),
         });
     }
-}
 
-/// A key edge. Posted at the HID tap and deliberately NOT tagged — a stamped keystroke defeats a
-/// host IME's own tap-dedup and composes Telex twice. Free of the injector because a keystroke
-/// reads nothing from it: there is no destination to choose and no coordinate to map.
-fn post_key(key_code: u16, down: bool, modifiers: InputModifiers) {
-    let _ = slopdesk_apple_cgevent::post_key(key_code, down, modifiers.bits());
+    /// A key edge. Posted at the HID tap and deliberately NOT tagged — a stamped keystroke defeats
+    /// a host IME's own tap-dedup and composes Telex twice. It reads nothing else from the
+    /// injector: there is no destination to choose and no coordinate to map.
+    fn post_key(&self, key_code: u16, down: bool, repeat: bool, modifiers: InputModifiers) {
+        self.sink.key(key_code, down, repeat, modifiers.bits());
+    }
+
+    /// Records whether a phased gesture is open after this scroll's phase byte, for the teardown
+    /// that may have to close it. Momentum carries no `began`, so it never opens one.
+    fn note_scroll_phase(&self, scroll_phase: u8) {
+        if scroll_phase == SCROLL_BEGAN || scroll_phase == SCROLL_CHANGED {
+            self.scroll_open.store(true, Ordering::Relaxed);
+        } else if scroll_phase != 0 {
+            self.scroll_open.store(false, Ordering::Relaxed);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------- //
@@ -525,12 +617,12 @@ impl Core {
         });
         let command = InputModifiers::COMMAND;
         if !command_held {
-            post_key(KEY_COMMAND, true, command);
+            self.post_key(KEY_COMMAND, true, false, command);
         }
-        post_key(key_code, true, command);
-        post_key(key_code, false, command);
+        self.post_key(key_code, true, false, command);
+        self.post_key(key_code, false, false, command);
         if !command_held {
-            post_key(KEY_COMMAND, false, InputModifiers::from_bits(0));
+            self.post_key(KEY_COMMAND, false, false, InputModifiers::from_bits(0));
         }
     }
 }
@@ -593,9 +685,9 @@ fn raise_pump(core: &Arc<Core>, jobs: &Receiver<()>) {
 fn scroll_pump(core: &Arc<Core>, jobs: &Receiver<ScrollJob>, raise: Option<&Sender<()>>, hz: u64) {
     let interval = Duration::from_nanos((NANOS_PER_SECOND / hz).max(1));
     let mut resampler = ScrollResampler::new(core.gates.scroll_spread, ScrollResampler::DEFAULT_LAG_CAP);
-    // The tag of the latest forwarded scroll, replayed onto the interpolated sub-events so the
-    // self-inject filter still recognises them.
-    let mut last_tag = 0_u32;
+    // The latest forwarded scroll: its tag is replayed onto the interpolated sub-events so the
+    // self-inject filter still recognises them, and its modifiers so a coasting ⌘-wheel stays one.
+    let mut last = (ScrollEvent::default(), 0_u32);
     loop {
         // `is_idle` is exactly the condition under which `drain` answers `None`, so a deadline
         // while it holds buys a wakeup and nothing else.
@@ -605,51 +697,42 @@ fn scroll_pump(core: &Arc<Core>, jobs: &Receiver<ScrollJob>, raise: Option<&Send
             jobs.recv_timeout(interval)
         };
         match job {
-            Ok(ScrollJob::Scroll {
-                dx,
-                dy,
-                scroll_phase,
-                momentum_phase,
-                continuous,
-                tag,
-            }) => {
-                last_tag = tag;
-                for marker in resampler.ingest(dx, dy, scroll_phase, momentum_phase, continuous) {
-                    core.post_scroll(
-                        marker.dx,
-                        marker.dy,
-                        marker.scroll_phase,
-                        marker.momentum_phase,
-                        marker.continuous,
-                        tag,
-                    );
+            Ok(ScrollJob::Scroll { scroll, tag }) => {
+                last = (scroll, tag);
+                for marker in resampler.ingest(
+                    scroll.dx,
+                    scroll.dy,
+                    scroll.scroll_phase,
+                    scroll.momentum_phase,
+                    scroll.continuous,
+                ) {
+                    core.post_scroll(&resampled(&scroll, &marker), tag);
                 }
                 if let Some(sub) = resampler.drain() {
-                    core.post_scroll(
-                        sub.dx,
-                        sub.dy,
-                        sub.scroll_phase,
-                        sub.momentum_phase,
-                        sub.continuous,
-                        tag,
-                    );
+                    core.post_scroll(&resampled(&scroll, &sub), tag);
                 }
             },
             Ok(ScrollJob::SwipeNav(fired)) => core.post_nav_chord(fired, raise),
             Err(RecvTimeoutError::Timeout) => {
                 if let Some(sub) = resampler.drain() {
-                    core.post_scroll(
-                        sub.dx,
-                        sub.dy,
-                        sub.scroll_phase,
-                        sub.momentum_phase,
-                        sub.continuous,
-                        last_tag,
-                    );
+                    core.post_scroll(&resampled(&last.0, &sub), last.1);
                 }
             },
             Err(RecvTimeoutError::Disconnected) => return,
         }
+    }
+}
+
+/// One resampler emission as a wire-shaped scroll: the sub-event's deltas and phases over the
+/// source gesture's position and modifiers.
+const fn resampled(source: &ScrollEvent, sub: &SubEvent) -> ScrollEvent {
+    ScrollEvent {
+        dx: sub.dx,
+        dy: sub.dy,
+        scroll_phase: sub.scroll_phase,
+        momentum_phase: sub.momentum_phase,
+        continuous: sub.continuous,
+        ..*source
     }
 }
 
@@ -768,6 +851,31 @@ impl Injector {
         bounds: VideoRect,
         held: HeldInput,
     ) -> Self {
+        Self::with_sink(
+            overlay,
+            input_trace,
+            pid,
+            window_id,
+            bounds,
+            held,
+            Box::new(HidTap),
+        )
+    }
+
+    /// [`Self::new`] with the posts going to `sink` instead of the window server.
+    ///
+    /// The production constructor above is this with the HID tap; a test hands in a ledger and
+    /// reads the sequence of posts a decision produced.
+    #[must_use]
+    pub(crate) fn with_sink(
+        overlay: &Overlay,
+        input_trace: bool,
+        pid: i32,
+        window_id: u32,
+        bounds: VideoRect,
+        held: HeldInput,
+        sink: Box<dyn PostsEvents>,
+    ) -> Self {
         let (gates, swipe_nav) = resolve(overlay, input_trace);
         announce_regime(pid, window_id, &gates, &swipe_nav);
         let core = Arc::new(Core {
@@ -784,6 +892,9 @@ impl Injector {
             )),
             swipe_nav,
             clock: Instant::now(),
+            last_pointer: Mutex::new(None),
+            scroll_open: AtomicBool::new(false),
+            sink,
         });
         let raise = (pid > 0).then(|| {
             let (jobs, inbox) = channel();
@@ -818,28 +929,13 @@ impl Injector {
     }
 
     /// Routes a forwarded wire scroll: straight out on the direct path, or onto the pump.
-    fn route_scroll(
-        &self,
-        dx: f64,
-        dy: f64,
-        scroll_phase: u8,
-        momentum_phase: u8,
-        continuous: bool,
-        tag: u32,
-    ) {
+    fn route_scroll(&self, scroll: &ScrollEvent, tag: u32) {
+        self.core.note_scroll_phase(scroll.scroll_phase);
         let Some(jobs) = self.scroll.as_ref().and_then(|pump| pump.jobs.as_ref()) else {
-            self.core
-                .post_scroll(dx, dy, scroll_phase, momentum_phase, continuous, tag);
+            self.core.post_scroll(scroll, tag);
             return;
         };
-        let _ = jobs.send(ScrollJob::Scroll {
-            dx,
-            dy,
-            scroll_phase,
-            momentum_phase,
-            continuous,
-            tag,
-        });
+        let _ = jobs.send(ScrollJob::Scroll { scroll: *scroll, tag });
     }
 
     /// Feeds the recogniser and, on a qualifying completed flick, fires the chord.
@@ -942,14 +1038,8 @@ impl InputInjector for Injector {
                 );
             },
             InputEvent::Scroll(ref scroll, tag) => {
-                self.route_scroll(
-                    scroll.dx,
-                    scroll.dy,
-                    scroll.scroll_phase,
-                    scroll.momentum_phase,
-                    scroll.continuous,
-                    tag,
-                );
+                self.core.settle_pointer_for_scroll(scroll.normalized, tag);
+                self.route_scroll(scroll, tag);
                 self.feed_swipe_recognizer(
                     scroll.dx,
                     scroll.dy,
@@ -959,11 +1049,62 @@ impl InputInjector for Injector {
                 );
             },
             InputEvent::Key(ref key, _) => {
-                post_key(key.key_code, key.down, key.modifiers);
+                self.core
+                    .post_key(key.key_code, key.down, key.repeat, key.modifiers);
             },
             InputEvent::Text(ref text, _) => {
-                let _ = slopdesk_apple_cgevent::post_text(text);
+                self.core.sink.text(text);
             },
+        }
+    }
+
+    /// Lets go of everything the ledger says is held, and clears it.
+    ///
+    /// A session that ends mid-drag or mid-⌘ — the link dropped, the client crashed — leaves the
+    /// host with a button the target app is still tracking and a modifier latched on the shared
+    /// event source, and the next thing a person does AT the host inherits both. The button ups
+    /// post at the last placed pointer with empty flags, each held modifier gets its release, and
+    /// an open scroll gesture gets the `ended` marker the client never sent, routed through the
+    /// pump so it lands after the residual the pump is still metering out. The ledger empties as
+    /// it is read, which is what makes a second call post nothing.
+    fn release_all(&self) {
+        let (buttons, keys): (Vec<MouseButton>, Vec<u16>) = {
+            let Ok(mut balance) = self.core.balance.lock() else {
+                return;
+            };
+            let held = (
+                balance.held().iter().copied().collect(),
+                balance.held_modifier_keys().iter().copied().collect(),
+            );
+            *balance = InputButtonBalance::new();
+            held
+        };
+        let at = self.core.pointer_or_centre();
+        for button in buttons {
+            self.core.post_pointer(PointerSpec {
+                kind: PointerKind::Up,
+                button,
+                at,
+                click_count: 1,
+                modifiers: InputModifiers::from_bits(0),
+                tag: 0,
+                warp: false,
+                tablet: false,
+            });
+        }
+        for key_code in keys {
+            self.core
+                .post_key(key_code, false, false, InputModifiers::from_bits(0));
+        }
+        if self.core.scroll_open.swap(false, Ordering::Relaxed) {
+            self.route_scroll(
+                &ScrollEvent {
+                    scroll_phase: SCROLL_ENDED,
+                    continuous: true,
+                    ..ScrollEvent::default()
+                },
+                0,
+            );
         }
     }
 
@@ -1015,11 +1156,221 @@ pub fn resample_hz(overlay: &Overlay) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use slopdesk_video::geometry::VideoRect;
+    use std::sync::{Arc, Mutex, PoisonError};
 
-    use super::{HeldInput, Injector, resample_hz};
+    use slopdesk_apple_cgevent::{PointerKind, PointerPost, ScrollPost};
+    use slopdesk_video::client_gestures::{SCROLL_BEGAN, SCROLL_CHANGED, SCROLL_ENDED};
+    use slopdesk_video::geometry::{VideoPoint, VideoRect};
+    use slopdesk_video::input_event::{
+        InputEvent, InputModifiers, KeyEvent, MouseButton, MouseButtonEvent, ScrollEvent,
+    };
+    use slopdesk_video::input_routing::InputButtonBalance;
+
+    use super::{HeldInput, Injector, PostsEvents, resample_hz};
     use crate::env::Overlay;
     use crate::session_inbound::InputInjector as _;
+
+    /// One post, reduced to what a decision in this module can change about it.
+    #[expect(
+        variant_size_differences,
+        reason = "a test ledger; the point is the assertion, not the slot size"
+    )]
+    #[derive(Clone, Debug, PartialEq)]
+    enum Post {
+        Pointer(PointerKind, MouseButton, VideoPoint),
+        Scroll(u8),
+        Key(u16, bool, u8),
+    }
+
+    /// A sink that keeps every post, in order, and posts nothing.
+    #[derive(Clone, Debug, Default)]
+    struct Ledger(Arc<Mutex<Vec<Post>>>);
+
+    impl Ledger {
+        fn posts(&self) -> Vec<Post> {
+            self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        }
+        fn record(&self, post: Post) {
+            self.0.lock().unwrap_or_else(PoisonError::into_inner).push(post);
+        }
+    }
+
+    impl PostsEvents for Ledger {
+        fn pointer(&self, post: &PointerPost) {
+            let button = match post.button {
+                slopdesk_apple_cgevent::Button::Left => MouseButton::Left,
+                slopdesk_apple_cgevent::Button::Right => MouseButton::Right,
+                slopdesk_apple_cgevent::Button::Other => MouseButton::Other,
+            };
+            self.record(Post::Pointer(post.kind, button, VideoPoint::new(post.x, post.y)));
+        }
+        fn scroll(&self, post: &ScrollPost) {
+            self.record(Post::Scroll(post.scroll_phase));
+        }
+        fn key(&self, key_code: u16, down: bool, _repeat: bool, modifiers: u8) {
+            self.record(Post::Key(key_code, down, modifiers));
+        }
+        fn text(&self, _: &str) {}
+    }
+
+    /// A display-scoped injector over a 100×100 window at the origin, posting into `ledger`.
+    fn recording(held: HeldInput, ledger: &Ledger) -> Injector {
+        Injector::with_sink(
+            &Overlay::default(),
+            false,
+            0,
+            0,
+            VideoRect::xywh(0.0, 0.0, 100.0, 100.0),
+            held,
+            Box::new(ledger.clone()),
+        )
+    }
+
+    fn scroll_at(x: f64, y: f64, scroll_phase: u8) -> InputEvent {
+        InputEvent::Scroll(
+            ScrollEvent {
+                dx: 0.0,
+                dy: -3.0,
+                normalized: VideoPoint::new(x, y),
+                scroll_phase,
+                momentum_phase: 0,
+                continuous: true,
+                modifiers: InputModifiers::default(),
+            },
+            7,
+        )
+    }
+
+    /// A wheel event carries no location, so the pointer is put where the gesture happened FIRST
+    /// — once per place, not once per tick: the second scroll at the same spot posts only itself.
+    #[test]
+    fn a_scroll_puts_the_pointer_where_it_happened_before_it_posts() {
+        let ledger = Ledger::default();
+        let injector = recording(HeldInput::default(), &ledger);
+        injector.inject(&scroll_at(0.5, 0.5, SCROLL_BEGAN));
+        injector.inject(&scroll_at(0.5, 0.5, SCROLL_CHANGED));
+        injector.inject(&scroll_at(0.6, 0.5, SCROLL_CHANGED));
+        // Dropping joins the scroll pump, so every routed scroll has been posted.
+        drop(injector);
+        let posts = ledger.posts();
+        assert_eq!(
+            posts.first(),
+            Some(&Post::Pointer(
+                PointerKind::Move,
+                MouseButton::Left,
+                VideoPoint::new(50.0, 50.0)
+            )),
+            "the first scroll is preceded by a hover to its own position: {posts:?}"
+        );
+        let moves = posts
+            .iter()
+            .filter(|post| matches!(post, Post::Pointer(PointerKind::Move, ..)))
+            .count();
+        assert_eq!(moves, 2, "one settle per place, none for the repeat: {posts:?}");
+        assert!(
+            posts.contains(&Post::Pointer(
+                PointerKind::Move,
+                MouseButton::Left,
+                VideoPoint::new(60.0, 50.0)
+            )),
+            "the moved gesture settles at its new place: {posts:?}"
+        );
+    }
+
+    /// A hover that already put the pointer where the scroll happens costs the scroll nothing.
+    #[test]
+    fn a_scroll_after_its_own_hover_posts_no_extra_move() {
+        let ledger = Ledger::default();
+        let injector = recording(HeldInput::default(), &ledger);
+        injector.inject(&InputEvent::MouseMove {
+            normalized: VideoPoint::new(0.25, 0.25),
+            tag: 7,
+        });
+        injector.inject(&scroll_at(0.25, 0.25, SCROLL_BEGAN));
+        drop(injector);
+        let moves = ledger
+            .posts()
+            .iter()
+            .filter(|post| matches!(post, Post::Pointer(PointerKind::Move, ..)))
+            .count();
+        assert_eq!(moves, 1);
+    }
+
+    /// The release lets go of exactly what the ledger holds — one up per button, one release per
+    /// modifier key with EMPTY flags — and a second release has nothing left to post.
+    #[test]
+    fn a_release_lets_go_of_every_held_button_and_modifier_once() {
+        let mut balance = InputButtonBalance::new();
+        let _ = balance.plan(&InputEvent::MouseDown(
+            MouseButtonEvent {
+                button: MouseButton::Left,
+                normalized: VideoPoint::new(0.5, 0.5),
+                click_count: 1,
+                modifiers: InputModifiers::from_bits(0),
+            },
+            0,
+        ));
+        let _ = balance.plan(&InputEvent::Key(
+            KeyEvent {
+                key_code: 55,
+                down: true,
+                repeat: false,
+                modifiers: InputModifiers::COMMAND,
+            },
+            0,
+        ));
+        let (buttons, modifiers) = balance.masks();
+        let ledger = Ledger::default();
+        let injector = recording(HeldInput { modifiers, buttons }, &ledger);
+        injector.release_all();
+        assert_eq!(ledger.posts(), vec![
+            Post::Pointer(PointerKind::Up, MouseButton::Left, VideoPoint::new(50.0, 50.0)),
+            Post::Key(55, false, 0),
+        ]);
+        assert_eq!(
+            injector.balance(),
+            HeldInput::default(),
+            "the ledger is empty after"
+        );
+        injector.release_all();
+        assert_eq!(ledger.posts().len(), 2, "a second release posts nothing");
+    }
+
+    /// A gesture the client began and never ended is ended by the teardown, AFTER whatever the
+    /// pump still had to post — the marker rides the same channel as the residual.
+    #[test]
+    fn a_release_mid_gesture_posts_the_ended_marker_last() {
+        let ledger = Ledger::default();
+        let injector = recording(HeldInput::default(), &ledger);
+        injector.inject(&scroll_at(0.5, 0.5, SCROLL_BEGAN));
+        injector.inject(&scroll_at(0.5, 0.5, SCROLL_CHANGED));
+        injector.release_all();
+        drop(injector);
+        let posts = ledger.posts();
+        assert_eq!(posts.last(), Some(&Post::Scroll(SCROLL_ENDED)), "{posts:?}");
+        assert_eq!(
+            posts
+                .iter()
+                .filter(|post| **post == Post::Scroll(SCROLL_ENDED))
+                .count(),
+            1
+        );
+    }
+
+    /// A gesture the client ended itself needs no closing from the teardown.
+    #[test]
+    fn a_release_after_an_ended_gesture_posts_no_marker() {
+        let ledger = Ledger::default();
+        let injector = recording(HeldInput::default(), &ledger);
+        injector.inject(&scroll_at(0.5, 0.5, SCROLL_BEGAN));
+        injector.inject(&scroll_at(0.5, 0.5, SCROLL_ENDED));
+        drop(injector);
+        let before = ledger.posts().len();
+        let injector = recording(HeldInput::default(), &ledger);
+        injector.release_all();
+        drop(injector);
+        assert_eq!(ledger.posts().len(), before);
+    }
 
     /// A DISPLAY-scoped injector raises nothing, so it must start no raise thread at all — the
     /// whole-desktop pane has no window to bring forward and asking the tree for one would cost an

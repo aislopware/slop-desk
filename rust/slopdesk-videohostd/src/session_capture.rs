@@ -68,6 +68,20 @@ use crate::session_pump::{CapturePump, EncodedPump, EncoderSlot};
 use crate::session_wiring::{ClientLiveness, Live, Target, initial_governor};
 use crate::wake::HostDisplayWake;
 
+/// What a teardown does with the button or the modifier the person is still physically holding.
+///
+/// The injector's ledger is the host's only memory of it, and the two teardowns want opposite
+/// things of that memory: a re-mint seeds the replacement with it, so the drag the person never let
+/// go of survives the reconnect, while a session that is over must let go on the host's behalf, or
+/// the target app keeps tracking a button nobody will release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HeldInputFate {
+    /// A replacement is coming and has already read the balance; post nothing.
+    Carry,
+    /// Nothing replaces this injector: release every held button and modifier before it drops.
+    Release,
+}
+
 /// How long after a cadence announcement its duplicate goes out.
 ///
 /// `slopdesk_video::video_control`'s own term for [`VideoControlMessage::StreamCadence`]: the
@@ -114,7 +128,7 @@ impl Session {
             .as_ref()
             .map_or(0, |live| live.live.generation);
         let held = self.input_balance();
-        self.teardown_live();
+        self.teardown_live(HeldInputFate::Carry);
 
         // 2. THE PIXEL GEOMETRY AND THE RATE, BEFORE ANYTHING IS BUILT. The bitrate is
         //    resolution-aware and is BOTH the encoder's target and the congestion controller's
@@ -399,7 +413,7 @@ impl Session {
     /// rather than scattering them beside it. There is nothing left for this arm to add, and a
     /// statement that appeared here but not in the teardown would be one a `bye` skipped.
     pub(crate) fn stop_capture(&self) {
-        self.teardown_live();
+        self.teardown_live(HeldInputFate::Release);
     }
 
     /// Tears the live components down, in the one order that ends with the host as it was found.
@@ -408,7 +422,7 @@ impl Session {
     /// the two race in normal operation — a client `bye` and the idle reaper arrive together. Made
     /// idempotent by TAKING the [`Streaming`] value: whoever wins the lock gets the components, and
     /// every later caller finds a `None` and does nothing.
-    pub(crate) fn teardown_live(&self) {
+    pub(crate) fn teardown_live(&self, held_input: HeldInputFate) {
         // 1. TAKE THE SET, AND DROP THE LOCK. Not just for contention: step 4 JOINS the heartbeat
         //    thread, and that thread takes this same lock on every tick, so holding it here would
         //    deadlock a teardown against a heartbeat that had just woken.
@@ -480,11 +494,19 @@ impl Session {
         //    them. Clearing the seam is what makes the join happen: the pump holds the only other
         //    handle, and it drops this one on the next drain.
         //
-        //    The BALANCE is deliberately not read here. A teardown is not necessarily a re-mint,
-        // and    the next bring-up reads it off the seam itself at its step 6 — which
-        // answers the empty    ledger once this has run, and the live one when a re-mint
-        // gets there first.
-        self.set_input_injector(None);
+        //    What happens to the button or the ⌘ the person is still holding is the caller's to
+        //    say. A re-mint has already read the balance and will seed the replacement with it, so
+        //    releasing here would break the very drag the reconnect is keeping alive; a session
+        //    that is OVER has no replacement coming, and a button left down or a modifier left
+        //    latched on the host's shared event source outlives the session that put it there. The
+        //    release runs on the taken handle, outside the seam's lock, because it posts.
+        let injector = self.take_input_injector();
+        if held_input == HeldInputFate::Release
+            && let Some(injector) = injector.as_ref()
+        {
+            injector.release_all();
+        }
+        drop(injector);
     }
 
     /// Applies the client's app-audio wish: the latch, the lane's gate and the tap's gate.
@@ -815,6 +837,9 @@ impl CaptureStream for LiveCapture {
         pixel_height: i32,
     ) -> Result<(), CannotResizeInPlace> {
         let retired = self.encoder.swap(encoder, pixel_width, pixel_height);
+        // Drained HERE, before the stream can deliver a new-size frame to the new encoder — see
+        // `Retired::complete_frames`. The drain after `install_swapped` stays as the belt.
+        retired.complete_frames();
         let outcome = self.capturer.resize(pixel_width, pixel_height);
         if outcome.is_err() {
             self.encoder.restore(retired);
@@ -1382,7 +1407,7 @@ mod tests {
     fn a_teardown_clears_the_slot_and_stops_the_stream_exactly_once() {
         let (session, _registry) = session(window_target());
         let recorder = install(&session, false);
-        session.teardown_live();
+        session.teardown_live(HeldInputFate::Release);
         assert!(
             session.locked_streaming().is_none(),
             "the live slot must be empty for the next bring-up to install into"
@@ -1390,8 +1415,8 @@ mod tests {
         assert_eq!(recorder.stops.load(Ordering::Relaxed), 1);
         // A client `bye` and the idle reaper reach this together in normal operation, and each of
         // the steps under it is a double-free in a different library.
-        session.teardown_live();
-        session.teardown_live();
+        session.teardown_live(HeldInputFate::Release);
+        session.teardown_live(HeldInputFate::Release);
         assert_eq!(
             recorder.stops.load(Ordering::Relaxed),
             1,
@@ -1414,11 +1439,11 @@ mod tests {
         // set is the only memory of which kind of session this was by the time a teardown runs.
         let (window, _window_registry) = session(window_target());
         let _recorder = install(&window, false);
-        window.teardown_live();
+        window.teardown_live(HeldInputFate::Release);
 
         let (display, _display_registry) = session(Target::Display { id: 5 });
         let _display_recorder = install(&display, true);
-        display.teardown_live();
+        display.teardown_live(HeldInputFate::Release);
         // The assertion count clamps at zero on the owner thread, so the pair above is observable
         // only as the absence of a hang: a release that underflowed would hold the host's display
         // awake until the daemon died.
@@ -1454,7 +1479,7 @@ mod tests {
     fn an_audio_wish_that_arrives_after_the_teardown_touches_nothing() {
         let (session, _registry) = session(window_target());
         let recorder = install(&session, false);
-        session.teardown_live();
+        session.teardown_live(HeldInputFate::Release);
         session.apply_audio_control(true);
         assert!(
             recorder
@@ -1488,7 +1513,7 @@ mod tests {
             0,
             "and the blank is never wired to the live set — it has its own lock for that reason"
         );
-        session.teardown_live();
+        session.teardown_live(HeldInputFate::Release);
     }
 
     /// The race this whole ordering exists for: a `PrivacyMode { enabled: true }` still in the
@@ -1503,7 +1528,7 @@ mod tests {
     fn a_privacy_wish_that_arrives_after_the_teardown_darkens_nothing() {
         let (session, _registry) = session(unreal_display_target());
         let _recorder = install(&session, true);
-        session.teardown_live();
+        session.teardown_live(HeldInputFate::Release);
         session.apply_privacy_mode(true);
         assert!(
             session
@@ -1522,7 +1547,7 @@ mod tests {
         let (session, _registry) = session(unreal_display_target());
         let _recorder = install(&session, true);
         session.apply_privacy_mode(true);
-        session.teardown_live();
+        session.teardown_live(HeldInputFate::Release);
         assert!(
             session
                 .privacy
@@ -1532,7 +1557,7 @@ mod tests {
             "step 3 takes the value, so a late wish has nothing to re-engage"
         );
         // Idempotent by the same take: the second call is the `bye`-racing-the-reaper path.
-        session.teardown_live();
+        session.teardown_live(HeldInputFate::Release);
     }
 
     /// A refused gamma call leaves the session NOT private, and says so by leaving the controller
@@ -1551,7 +1576,7 @@ mod tests {
             "the controller exists so the client's re-assert retries, but it is not engaged"
         );
         drop(privacy);
-        session.teardown_live();
+        session.teardown_live(HeldInputFate::Release);
     }
 
     /// Disengaging is answered for a session whose stream has already gone. That arm HEALS a host,
@@ -1561,7 +1586,7 @@ mod tests {
     fn a_disengage_is_answered_even_after_the_stream_is_over() {
         let (session, _registry) = session(unreal_display_target());
         let _recorder = install(&session, true);
-        session.teardown_live();
+        session.teardown_live(HeldInputFate::Release);
         session.apply_privacy_mode(false);
         assert!(
             session

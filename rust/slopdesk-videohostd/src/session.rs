@@ -73,6 +73,7 @@ use crate::mux_registry::LaneSession;
 use crate::packetize::PacketizeLane;
 use crate::privacy::{HostGamma, PrivacyBlank};
 use crate::sendlane::{DatagramSink, RetransmitLog, VideoSendLane};
+use crate::session_capture::HeldInputFate;
 use crate::session_inbound::adaptive_m_enabled;
 use crate::session_wiring::{ClientLiveness, Controllers, FrameCounters, Live, SessionSpec, Target};
 
@@ -605,7 +606,7 @@ impl LaneSession for Session {
                 self.send_control(&message);
             }
         }
-        self.teardown_live();
+        self.teardown_live(HeldInputFate::Release);
         self.transport.stop();
     }
 

@@ -370,14 +370,15 @@ impl Encoder {
         if let Some(qp) = creation.max_qp {
             let _ = session.set_int(Key::MaxAllowedFrameQP, i64::from(qp));
         }
-        if self.shape.full_range {
-            // Gated, because an unconditional set changes the parameter-set bytes and costs the
-            // client a decoder rebuild on the first keyframe to say what the stream already said.
-            // The luma RANGE is not set here at all — it rides the source pixel buffer's variant.
-            let _ = session.set_string(Key::ColorPrimaries, StringValue::Primaries709);
-            let _ = session.set_string(Key::TransferFunction, StringValue::Transfer709);
-            let _ = session.set_string(Key::YCbCrMatrix, StringValue::Matrix709);
-        }
+        // Pinned on EVERY session, not only a full-range one: VideoToolbox lifts no colour
+        // description from the input buffer's attachments, so without these the bitstream's VUI
+        // says "unspecified" and any consumer that honours it — a recording, QuickTime on a dumped
+        // stream — is left to guess. Five bytes per keyframe's parameter set, no per-frame cost,
+        // and the client builds its decoder from the first keyframe either way. The luma RANGE is
+        // not set here at all — it rides the source pixel buffer's variant.
+        let _ = session.set_string(Key::ColorPrimaries, StringValue::Primaries709);
+        let _ = session.set_string(Key::TransferFunction, StringValue::Transfer709);
+        let _ = session.set_string(Key::YCbCrMatrix, StringValue::Matrix709);
         if self.shape.ltr_enabled {
             let _ = session.set_bool(Key::EnableLtr, true);
         }

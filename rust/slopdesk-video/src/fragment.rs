@@ -4,7 +4,9 @@
 //! Fixed 19 bytes, big-endian:
 //!
 //! ```text
-//! off 0: u32 stream_seq           monotonic per-datagram sequence (loss and order)
+//! off 0: u32 stream_seq           per-datagram counter in PACKETIZE order — informational;
+//!                                 not send order under interleave, and loss is tracked by
+//!                                 frame_id/frag_index, never by a gap here
 //! off 4: u32 frame_id             groups the fragments of one encoded frame
 //! off 8: u16 frag_index           0-based index within the frame
 //! off10: u16 frag_count           total fragments in the frame — u16 so it can exceed 255
@@ -43,8 +45,12 @@ use crate::error::Result;
 pub const HEADER_SIZE: usize = 19;
 /// Max UDP payload size — "<= 1200 bytes" to stay under a typical MTU with `WireGuard` overhead.
 pub const MAX_DATAGRAM_SIZE: usize = 1200;
-/// Max payload bytes per fragment: the datagram budget minus the header.
-pub const MAX_PAYLOAD_SIZE: usize = MAX_DATAGRAM_SIZE - HEADER_SIZE;
+/// Max payload bytes per DATA fragment.
+///
+/// The datagram budget minus the header, minus the length prefix a parity shard carries: a group's
+/// parity is as wide as its widest length-prefixed member, so the parity datagram of a full data
+/// fragment is the widest a frame produces, and it is the one the budget must hold.
+pub const MAX_PAYLOAD_SIZE: usize = MAX_DATAGRAM_SIZE - HEADER_SIZE - crate::fec::PREFIX_BYTES;
 
 /// Per-fragment flags — a bit set over the flags byte.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -331,7 +337,10 @@ mod tests {
     fn the_header_size_matches_what_encode_actually_writes() {
         let written = FrameFragment::default().encode().len();
         assert_eq!(written, HEADER_SIZE);
-        assert_eq!(MAX_PAYLOAD_SIZE, MAX_DATAGRAM_SIZE - HEADER_SIZE);
+        assert_eq!(
+            MAX_PAYLOAD_SIZE + crate::fec::PREFIX_BYTES,
+            MAX_DATAGRAM_SIZE - HEADER_SIZE
+        );
     }
 
     #[test]

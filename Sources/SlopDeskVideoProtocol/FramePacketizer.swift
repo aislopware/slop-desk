@@ -5,7 +5,8 @@ import Foundation
 ///
 /// Concrete layout (`fragCount` is a `UInt16` so it can exceed 255):
 /// ```
-/// off 0: UInt32 streamSeq        — monotonic per-datagram sequence number (loss/order)
+/// off 0: UInt32 streamSeq        — per-datagram counter in PACKETIZE order; informational (not
+///                                  send order under interleave; loss is tracked by frameID/fragIndex)
 /// off 4: UInt32 frameID          — groups fragments of one encoded video frame
 /// off 8: UInt16 fragIndex        — 0-based index of this fragment within the frame
 /// off10: UInt16 fragCount        — total fragments in the frame

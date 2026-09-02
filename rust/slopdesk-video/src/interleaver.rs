@@ -31,39 +31,36 @@
 //! single-parity wire. `m` is recovered from the parity count and the group count, so the caller
 //! passes only the data `group_size`.
 
-use crate::fragment::{Flags, FrameFragment};
-
-/// Returns `fragments` reordered for burst-resilient transmission.
+/// Returns `items` — the first `data_count` of them data, the rest parity, as the packetizer emits
+/// them — reordered for burst-resilient transmission.
+///
+/// Generic over the item because the send path holds finished wire datagrams and never parses
+/// them back into fragments: the order is a function of the two counts and the group size alone,
+/// so the permutation is computed on positions and applied to whatever the positions hold.
 ///
 /// A byte-for-byte pass-through when `group_size <= 1`, when there is at most one data group, or
-/// when there are no more fragments than one group. The result is always a PERMUTATION of the
-/// input — the same fragments with every `frag_index` preserved — including when the parity count
-/// does not divide evenly by the group count, in which case the strided walk's leftovers are swept
-/// up in original order.
+/// when there are no more items than one group. The result is always a PERMUTATION of the input —
+/// the same items with every `frag_index` preserved — including when the parity count does not
+/// divide evenly by the group count, in which case the strided walk's leftovers are swept up in
+/// original order.
 #[must_use]
-pub fn interleave(fragments: Vec<FrameFragment>, group_size: usize) -> Vec<FrameFragment> {
-    if group_size <= 1 || fragments.len() <= group_size {
-        return fragments;
+pub fn interleave<T>(items: Vec<T>, data_count: usize, group_size: usize) -> Vec<T> {
+    if group_size <= 1 || items.len() <= group_size {
+        return items;
     }
-
-    // Count first, so the fallback below can return the original order untouched.
-    let data_count = fragments
-        .iter()
-        .filter(|fragment| !fragment.header.flags.contains(Flags::PARITY))
-        .count();
     // A single data group gains nothing: any two losses inside it are unrecoverable regardless.
+    let data_count = data_count.min(items.len());
     if data_count <= group_size {
-        return fragments;
+        return items;
     }
 
-    let mut data: Vec<Option<FrameFragment>> = Vec::with_capacity(data_count);
-    let mut parity: Vec<Option<FrameFragment>> =
-        Vec::with_capacity(fragments.len().saturating_sub(data_count));
-    for fragment in fragments {
-        if fragment.header.flags.contains(Flags::PARITY) {
-            parity.push(Some(fragment));
+    let mut data: Vec<Option<T>> = Vec::with_capacity(data_count);
+    let mut parity: Vec<Option<T>> = Vec::with_capacity(items.len().saturating_sub(data_count));
+    for (position, item) in items.into_iter().enumerate() {
+        if position < data_count {
+            data.push(Some(item));
         } else {
-            data.push(Some(fragment));
+            parity.push(Some(item));
         }
     }
 
@@ -86,21 +83,16 @@ pub fn interleave(fragments: Vec<FrameFragment>, group_size: usize) -> Vec<Frame
 /// Moves `slots` into `ordered` in rank-outer, group-inner order, leaving `None` behind. A `stride`
 /// of zero moves nothing, which is what makes the caller's sweep the only thing that runs when the
 /// parity section has no uniform shape.
-fn take_column_major(
-    slots: &mut [Option<FrameFragment>],
-    stride: usize,
-    num_groups: usize,
-    ordered: &mut Vec<FrameFragment>,
-) {
+fn take_column_major<T>(slots: &mut [Option<T>], stride: usize, num_groups: usize, ordered: &mut Vec<T>) {
     for rank in 0..stride {
         for group in 0..num_groups {
             let Some(index) = group.checked_mul(stride).and_then(|base| base.checked_add(rank)) else {
                 continue;
             };
             if let Some(slot) = slots.get_mut(index)
-                && let Some(fragment) = slot.take()
+                && let Some(item) = slot.take()
             {
-                ordered.push(fragment);
+                ordered.push(item);
             }
         }
     }
@@ -153,13 +145,13 @@ mod tests {
     #[test]
     fn consecutive_datagrams_come_from_different_groups() {
         // Nine data fragments in groups of three: 0,3,6, 1,4,7, 2,5,8.
-        let ordered = interleave(frame(9, 3), 3);
+        let ordered = interleave(frame(9, 3), 9, 3);
         assert_eq!(indices(&ordered)[..9], [0, 3, 6, 1, 4, 7, 2, 5, 8]);
     }
 
     #[test]
     fn parity_still_arrives_last() {
-        let ordered = interleave(frame(9, 3), 3);
+        let ordered = interleave(frame(9, 3), 9, 3);
         let tail = &indices(&ordered)[9..];
         assert_eq!(
             tail,
@@ -171,7 +163,7 @@ mod tests {
     #[test]
     fn single_parity_keeps_the_parity_section_in_group_order() {
         // m == 1: the column-major parity walk must reduce to a plain append.
-        let ordered = interleave(frame(6, 2), 3);
+        let ordered = interleave(frame(6, 2), 6, 3);
         assert_eq!(indices(&ordered), [0, 3, 1, 4, 2, 5, 6, 7]);
     }
 
@@ -179,7 +171,7 @@ mod tests {
     fn multi_parity_spreads_the_parity_section_across_groups_too() {
         // Two groups of three with m == 2: parity 6,7 belong to group 0 and 8,9 to group 1, so the
         // rank-outer walk emits 6,8 then 7,9.
-        let ordered = interleave(frame(6, 4), 3);
+        let ordered = interleave(frame(6, 4), 6, 3);
         assert_eq!(indices(&ordered)[6..], [6, 8, 7, 9]);
     }
 
@@ -188,7 +180,7 @@ mod tests {
         // Three groups with five parity shards: the strided walk covers one each, and the sweep
         // must pick up the rest without dropping or duplicating any.
         let before = frame(9, 5);
-        let after = interleave(before.clone(), 3);
+        let after = interleave(before.clone(), 9, 3);
         assert!(is_permutation_of(&before, &after));
         assert_eq!(after.len(), before.len());
     }
@@ -198,7 +190,7 @@ mod tests {
         for (data, parity, group) in [(9_u16, 3_u16, 1_usize), (2, 1, 3), (3, 1, 3)] {
             let before = frame(data, parity);
             assert_eq!(
-                interleave(before.clone(), group),
+                interleave(before.clone(), usize::from(data), group),
                 before,
                 "data {data} parity {parity} group {group} must not reorder"
             );
@@ -211,7 +203,7 @@ mod tests {
             for parity in 0_u16..6 {
                 for group in 1_usize..8 {
                     let before = frame(data, parity);
-                    let after = interleave(before.clone(), group);
+                    let after = interleave(before.clone(), usize::from(data), group);
                     assert!(
                         is_permutation_of(&before, &after),
                         "data {data} parity {parity} group {group} lost or duplicated a fragment"

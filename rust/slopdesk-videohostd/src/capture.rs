@@ -53,18 +53,24 @@
 //! the same problem: the delivery queue reads the framework's memory into something that can cross
 //! a thread, and nothing else crosses.
 //!
-//! The cost is nothing on either path the Swift had. A live frame handed straight to the encoder is
-//! still the framework's own surface, zero-copy; a live frame going to the decoupled backlog rides
-//! an `Arc` clone of the bytes that were cached anyway, so the two copies are the same two the
-//! Swift made (cache, then backlog). Only the static re-anchor pays a rebuild the Swift did not, at
-//! most a dozen times a second and only while the screen is not changing.
+//! A live frame handed straight to the encoder is still the framework's own surface, zero-copy. A
+//! live frame going to the decoupled backlog rides an `Arc` clone of the bytes that were cached
+//! anyway, and the drain rebuilds a surface from them before the encoder sees it — one per live
+//! frame on the default path, which is why the drain draws that surface from a
+//! [`PixelBufferPool`] it keeps on its own thread rather than creating one: a fresh `IOSurface`
+//! per frame is allocated, mapped and page-faulted before the first byte lands, and a pool hands
+//! the previous frame's surface straight back. Measured at 1080p the pooled rebuild is a third of
+//! the fresh one. The static re-anchor, at most a dozen times a second and only while the screen
+//! is not changing, rebuilds fresh on the frame queue.
 //!
 //! A rebuilt buffer carries no colour attachments, and that is safe HERE for a reason that is worth
 //! writing down: the encoder session pins `ColorPrimaries`, `TransferFunction` and `YCbCrMatrix` to
-//! BT.709 itself (`slopdesk-ffi/src/encoder.rs`, the three `set_string` calls), so the bitstream's
-//! colour metadata comes from the session and never from the input buffer's attachments. The
-//! Swift's `CVBufferCopyAttachments` guarded a tone shift that this daemon's session already
-//! answers.
+//! BT.709 itself (`crate::encode`, the three `set_string` calls in [`Encoder::open`]), so the
+//! bitstream's colour metadata comes from the session and never from the input buffer's
+//! attachments. `VideoToolbox` lifts no colour description from an input buffer's attachments
+//! either way, so the session is the ONE source there is.
+//!
+//! [`Encoder::open`]: crate::encode::Encoder::open
 //!
 //! ## Threading: the frame queue is the serializer, and it comes from here
 //! One serial `DispatchQueue` carries both the `SCStream` screen output AND the static-IDR timer,
@@ -132,7 +138,9 @@ use slopdesk_apple_sck::{
     CMSampleBuffer, CMTime, CaptureRegion, CaptureSink, CaptureStream, CaptureTarget, DispatchQueue,
     DispatchRetained, NO_ERROR, StartRequest,
 };
-use slopdesk_apple_vt::{CFRetained, CVImageBuffer, Locked, PixelBuffer, PlaneBytes, Timestamp};
+use slopdesk_apple_vt::{
+    CFRetained, CVImageBuffer, Locked, PixelBuffer, PixelBufferPool, PlaneBytes, Timestamp,
+};
 use slopdesk_video::adaptive_qp::{QpCurve, compute_nv12};
 use slopdesk_video::capture_config::{
     resolve_capture_hz, resolve_capture_mode, resolve_heartbeat, resolve_idr_poll_tick, resolve_queue_depth,
@@ -407,6 +415,11 @@ impl Capturer {
         let min_fps = FpsGovernorConfig::from_env(&governor_values).min_fps;
         let heartbeat = resolve_heartbeat(read("SLOPDESK_HEARTBEAT_S").as_deref());
         let quiet = resolve_quiet_window(read("SLOPDESK_QUIET_MS").as_deref(), heartbeat);
+        let capture_hz = resolve_capture_hz(read("SLOPDESK_CAPTURE_HZ").as_deref(), fps).max(1);
+        // Two capture intervals: one because the stream's ceiling is the fastest a frame can follow
+        // its predecessor, and one more so a frame that arrives at the ceiling's own jitter is not
+        // mistaken for the live path having stopped. One division and one multiply, unfused.
+        let forced_quiet = 2.0 / f64::from(capture_hz);
         let inner = Inner {
             shape: Shape {
                 fps,
@@ -415,7 +428,7 @@ impl Capturer {
             },
             gates,
             heartbeat,
-            capture_hz: resolve_capture_hz(read("SLOPDESK_CAPTURE_HZ").as_deref(), fps).max(1),
+            capture_hz,
             queue_depth: resolve_queue_depth(read("SLOPDESK_CAPTURE_QUEUE_DEPTH").as_deref()),
             idr_tick: resolve_idr_poll_tick(read("SLOPDESK_IDR_TICK_MS").as_deref()),
             capture_mode: read("SLOPDESK_DISPLAY_CAPTURE"),
@@ -424,7 +437,7 @@ impl Capturer {
             frame_queue: DispatchQueue::new(FRAME_QUEUE_LABEL, None),
             audio_queue: DispatchQueue::new(AUDIO_QUEUE_LABEL, None),
             stream: Mutex::new(None),
-            live: Mutex::new(Live::new(heartbeat, quiet)),
+            live: Mutex::new(Live::new(heartbeat, quiet, forced_quiet)),
             latches: Mutex::new(Latches::new(fps)),
             audio_forwarding: Mutex::new(false),
             pacer: Mutex::new(PacerState::new(fps, min_fps)),
@@ -656,12 +669,16 @@ impl Capturer {
     /// static-IDR timer service it on a window where nothing is being delivered at all.
     pub fn request_keyframe(&self) {
         self.inner.lock_latches().keyframe = true;
+        // The timer's wake is computed from the latches it can see; a latch armed after that
+        // computation would otherwise wait out a whole poll tick before being noticed.
+        self.inner.wake_timer();
     }
 
     /// Arms a cheap LTR refresh — the recovery alternative to a forced IDR when the client's
     /// acknowledged reference is still good.
     pub fn request_ltr_refresh(&self) {
         self.inner.lock_latches().ltr_refresh = true;
+        self.inner.wake_timer();
     }
 
     /// Records whether client LTR acks are flowing, which is what arms the self-heal cadence.
@@ -978,7 +995,7 @@ struct Live {
 }
 
 impl Live {
-    const fn new(heartbeat: f64, quiet_window: f64) -> Self {
+    const fn new(heartbeat: f64, quiet_window: f64, forced_quiet: f64) -> Self {
         Self {
             cached: None,
             anchors: EncodeAnchors {
@@ -988,7 +1005,7 @@ impl Live {
                 force_compact_counter: 0,
                 has_emitted_first_frame: false,
             },
-            idr: StaticIdrDecider::new(heartbeat, Some(quiet_window)),
+            idr: StaticIdrDecider::with_forced_quiet(heartbeat, quiet_window, forced_quiet),
             stillness: StillnessCrispDecider::new(),
             cadence: EncodeCadenceGate::new(),
             motion_run: 0,
@@ -1267,9 +1284,10 @@ impl Inner {
 
     /// The timer thread: wake, hop onto the frame queue, tick, repeat.
     ///
-    /// The wake is the EARLIER of the next poll tick and any armed gated-tail flush, so the
-    /// one-shot flush needs no second timer. The body runs through
-    /// [`DispatchQueue::exec_sync`], which is the whole point of the thread: it is what
+    /// The wake is the EARLIEST of the next poll tick, any armed gated-tail flush, and — while a
+    /// recovery latch is pending — the moment the decider will serve it, so neither the one-shot
+    /// flush nor a frozen client needs a second timer or waits out a poll tick. The body runs
+    /// through [`DispatchQueue::exec_sync`], which is the whole point of the thread: it is what
     /// serialises a tick against the capture callback.
     ///
     /// The stop mutex is held ACROSS the wake computation, and the arming path takes it once after
@@ -1284,13 +1302,17 @@ impl Inner {
             }
             let wake = {
                 let now = self.now();
+                let forced = self.forced_pending();
                 let mut live = self.lock_live();
                 if live.next_tick_due <= now {
                     live.next_tick_due = now + self.idr_tick;
                 }
-                let due = live
+                let mut due = live
                     .gated_flush_due
                     .map_or(live.next_tick_due, |flush| flush.min(live.next_tick_due));
+                if forced {
+                    due = due.min(live.idr.forced_ready_at());
+                }
                 drop(live);
                 (due - now).clamp(0.0, self.idr_tick)
             };
@@ -1311,8 +1333,13 @@ impl Inner {
     ///
     /// The flush goes first because it carries the NEWEST content — a poll that emitted a synthetic
     /// IDR ahead of it would ship the same pixels twice, the second time under the older PTS.
+    ///
+    /// A pending recovery latch polls the moment the decider can serve it, between ticks: the poll
+    /// is what drains the latch, and a poll that only ran on the tick would quantise a frozen
+    /// client's wait to the tick.
     fn timer_body(&self) {
         let now = self.now();
+        let forced = self.forced_pending();
         let (flush, tick) = {
             let mut live = self.lock_live();
             if live.capture_stopped || live.capture_failed {
@@ -1322,8 +1349,8 @@ impl Inner {
             if flush {
                 live.gated_flush_due = None;
             }
-            let tick = now >= live.next_tick_due;
-            if tick {
+            let tick = now >= live.next_tick_due || (forced && now >= live.idr.forced_ready_at());
+            if now >= live.next_tick_due {
                 live.next_tick_due = now + self.idr_tick;
             }
             drop(live);
@@ -1382,6 +1409,15 @@ impl Inner {
             live.anchors.last_keyframe_emit = now;
         }
         self.emit_cached_crisp();
+    }
+
+    /// Whether a recovery latch of either kind is armed. PEEKED: the drain is the poll's.
+    ///
+    /// Read BEFORE `live` is taken, never under it: the lock order is `live` then `latches`, and
+    /// this is a sequential read on the timer's own path.
+    fn forced_pending(&self) -> bool {
+        let latches = self.peek();
+        latches.keyframe || latches.ltr_refresh
     }
 
     /// Whether the stillness decider says the screen is at rest and there is content to re-ship.
@@ -1804,7 +1840,7 @@ impl Inner {
             self.enqueue(bytes, presentation, plan);
             return;
         }
-        let Some(rebuilt) = rebuild(&bytes, self.shape.full_range) else {
+        let Some(rebuilt) = rebuild(&bytes, self.shape.full_range, None) else {
             return;
         };
         self.events.frame(rebuilt.image(), presentation, plan);
@@ -1860,7 +1896,13 @@ impl Inner {
     /// ENCODE — the Swift timed its handler call and not the `copyPixelBuffer` that preceded it,
     /// and folding an allocation into the load average would make the pacer step the rate down
     /// for work the encoder never did.
+    ///
+    /// The pool is a LOCAL of this thread, and that is the whole reason it can exist: a framework
+    /// object is neither `Send` nor `Sync`, so it cannot live in [`Inner`], and this thread is the
+    /// only one that rebuilds per live frame. It is replaced whenever the cached shape changes —
+    /// a resize — and dropped with the thread.
     fn run_encoder(&self) {
+        let mut pool: Option<PixelBufferPool> = None;
         loop {
             let entry = {
                 let mut backlog = self.lock_backlog();
@@ -1876,7 +1918,14 @@ impl Inner {
                 backlog.pending.pop_front()
             };
             let Some(entry) = entry else { continue };
-            let Some(rebuilt) = rebuild(&entry.bytes, self.shape.full_range) else {
+            let full_range = self.shape.full_range;
+            if !pool
+                .as_ref()
+                .is_some_and(|pool| pool.fits(entry.bytes.width, entry.bytes.height, full_range))
+            {
+                pool = PixelBufferPool::nv12(entry.bytes.width, entry.bytes.height, full_range).ok();
+            }
+            let Some(rebuilt) = rebuild(&entry.bytes, full_range, pool.as_ref()) else {
                 continue;
             };
             let started = Instant::now();
@@ -2089,7 +2138,8 @@ fn read_frame(locked: &Locked<'_>) -> Option<FrameBytes> {
     })
 }
 
-/// Builds a fresh IOSurface-backed `CVPixelBuffer` from cached bytes.
+/// Builds an IOSurface-backed `CVPixelBuffer` from cached bytes — drawn from `pool` when the
+/// caller keeps one of the right shape, created fresh otherwise.
 ///
 /// The result is a LOCAL of whichever consumer asked for it — the static re-anchor on the frame
 /// queue, or the decoupled drain on its own thread — and is dropped as soon as the encoder has
@@ -2099,8 +2149,11 @@ fn read_frame(locked: &Locked<'_>) -> Option<FrameBytes> {
 ///
 /// `None` on an allocation or lock failure, which is safe everywhere it is called: the caller
 /// simply ships nothing this tick, and the next one has the same cache to try again with.
-fn rebuild(frame: &FrameBytes, full_range: bool) -> Option<PixelBuffer> {
-    let target = PixelBuffer::nv12(frame.width, frame.height, full_range).ok()?;
+fn rebuild(frame: &FrameBytes, full_range: bool, pool: Option<&PixelBufferPool>) -> Option<PixelBuffer> {
+    let target = match pool.filter(|pool| pool.fits(frame.width, frame.height, full_range)) {
+        Some(pool) => pool.draw().ok()?,
+        None => PixelBuffer::nv12(frame.width, frame.height, full_range).ok()?,
+    };
     {
         let mut locked = target.lock()?;
         if let Some(mut luma) = locked.plane_mut(LUMA_PLANE) {
@@ -2230,12 +2283,13 @@ mod tests {
                   the test exists to catch"
     )]
 
-    use slopdesk_apple_vt::PixelBuffer;
+    use slopdesk_apple_vt::{PixelBuffer, PixelBufferPool};
     use slopdesk_video::frame_hash::SENTINEL;
     use slopdesk_video::geometry::VideoPoint;
 
     use super::{
-        AnchorDrive, PTS_TIMESCALE, Shape, confidence_milli, hash_locked, read_frame, rebuild, ticks_90k,
+        AnchorDrive, LUMA_PLANE, PTS_TIMESCALE, Shape, confidence_milli, hash_locked, read_frame, rebuild,
+        ticks_90k,
     };
 
     /// Nanoseconds, which is the timescale `ScreenCaptureKit` stamps a frame in.
@@ -2330,10 +2384,43 @@ mod tests {
                 hash_locked(&locked).expect("the source hashes"),
             )
         };
-        let rebuilt = rebuild(&frame, false).expect("the rebuild allocates and locks");
+        let rebuilt = rebuild(&frame, false, None).expect("the rebuild allocates and locks");
         let locked = rebuilt.lock_read_only().expect("the rebuild locks");
         let after = hash_locked(&locked).expect("the rebuild hashes");
         assert_eq!(before, after, "a round trip that changes the picture is not one");
+    }
+
+    /// The pooled rebuild is the fresh rebuild's picture — and a pool of the WRONG shape is
+    /// ignored rather than drawn from, which is the resize case.
+    #[test]
+    fn a_pooled_rebuild_is_the_same_picture_as_a_fresh_one() {
+        let source = patterned(48, 24);
+        let (frame, before) = {
+            let locked = source.lock_read_only().expect("the source locks");
+            (
+                read_frame(&locked).expect("the source reads out"),
+                hash_locked(&locked).expect("the source hashes"),
+            )
+        };
+        let pool = PixelBufferPool::nv12(48, 24, false).expect("a pool of the frame's shape");
+        for _ in 0..3_u32 {
+            let rebuilt = rebuild(&frame, false, Some(&pool)).expect("the pool draws and locks");
+            let locked = rebuilt.lock_read_only().expect("the rebuild locks");
+            assert_eq!(
+                hash_locked(&locked),
+                Some(before),
+                "the recycled surface carries the frame"
+            );
+        }
+        let stale = PixelBufferPool::nv12(96, 48, false).expect("a pool of another shape");
+        let rebuilt = rebuild(&frame, false, Some(&stale)).expect("a mismatched pool falls back");
+        let locked = rebuilt.lock_read_only().expect("the fallback locks");
+        let luma = locked.plane_view(LUMA_PLANE).expect("a luma plane");
+        assert_eq!(
+            (luma.width, luma.height),
+            (48, 24),
+            "at the FRAME's shape, not the pool's"
+        );
     }
 
     #[test]

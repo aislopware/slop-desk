@@ -318,6 +318,7 @@ enum CoreVectors {
                     scrollPhase: 2,
                     momentumPhase: 0,
                     continuous: true,
+                    modifiers: .init(rawValue: InputModifiers.command.rawValue),
                     tag: 10,
                 ),
                 [
@@ -328,6 +329,7 @@ enum CoreVectors {
                     "scrollPhase": 2,
                     "momentumPhase": 0,
                     "continuous": true,
+                    "mods": InputModifiers.command.rawValue,
                     "tag": 10,
                 ],
             ),
@@ -350,13 +352,20 @@ enum CoreVectors {
                     "scrollPhase": 0,
                     "momentumPhase": 2,
                     "continuous": true,
+                    "mods": 0,
                     "tag": 10,
                 ],
             ),
             ie(
                 "key",
-                .key(keyCode: 0x35, down: true, modifiers: .init(rawValue: InputModifiers.option.rawValue), tag: 11),
-                ["keyCode": 0x35, "down": true, "mods": InputModifiers.option.rawValue, "tag": 11],
+                .key(
+                    keyCode: 0x35,
+                    down: true,
+                    isRepeat: true,
+                    modifiers: .init(rawValue: InputModifiers.option.rawValue),
+                    tag: 11,
+                ),
+                ["keyCode": 0x35, "down": true, "repeat": true, "mods": InputModifiers.option.rawValue, "tag": 11],
             ),
             ie("text", .text("gõ được 文字", tag: 12), ["text": "gõ được 文字", "tag": 12]),
         ]
