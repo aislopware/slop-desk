@@ -155,14 +155,25 @@ The modules above are what a session IS. What actually runs them landed in the s
   itself crashes cannot loop.
 - **`discovery.rs`** — the answers that mint nothing, asked BEFORE the registry so a lane that only
   wanted the window list never starts a capture for the privilege.
-- **`session_resize.rs`** — the resize ladder, landed as the RESTART path only. The Swift's
-  in-place fast path — reconfigure the live `SCStream` and swap the encoder under it — is not
-  wired, and the module's header says exactly what is missing: a `swap_encoder` door in
-  `session_pump`, because a `VTCompressionSession` cannot change dimensions and the capture pump
-  holds its `Arc<Encoder>` immutably. `HostGates::in_place_resize_enabled` is deliberately left
-  unread rather than consulted for a branch that does not exist. Correctness is unchanged — this is
-  what the Swift's own fallback did on any in-place failure — and only the ~120 ms spin-up is paid.
-  The AUDIO LANE survives the rebuild: it is handed to the new capturer by
+- **`session_resize.rs`** — the resize ladder, both paths. The IN-PLACE one reconfigures the live
+  `SCStream` and swaps a new encoder under it, saving the framework's ~120 ms spin-up — the resize
+  freeze — and `HostGates::in_place_resize_enabled` (`SLOPDESK_INPLACE_RESIZE`, default **OFF**)
+  selects it through `takes_in_place`, composed with the capture's own shape by
+  `capture_config::can_resize_in_place`. OFF because no unit test can show that a
+  `ScreenCaptureKit` stream applied a new configuration or that the first buffer after it arrived
+  at the new size — `synthetic-tests-prove-nothing-fires` — so the branch ships implemented and
+  unit-tested but not live-verified, and the restart path serves every resize until an operator
+  sets the key or a host run promotes the default. The door it needed is `session_pump`'s `EncoderSlot`: a
+  `VTCompressionSession` cannot change dimensions and a `Capturer`'s event sink is fixed at
+  construction, so the pump's encoder lives behind one lock that a resize swaps between frames,
+  with a size guard armed BY that swap so a buffer from before the reconfigure never reaches an
+  encoder opened for after it. The encoder goes in under `Live::replace_encode`, which does NOT
+  bump the generation — the SET was not replaced, and a bump would tell the live pump it had been
+  superseded and swallow the next real capture death. EVERY way the fast path declines — gate off,
+  a per-window capture, a poller-owned union crop, a framework that refused the new configuration —
+  falls through to the RESTART path below with a set that is still capturing, which is what the
+  Swift's own fallback did and why correctness never rides on the fast one.
+  The AUDIO LANE survives the restart rebuild: it is handed to the new capturer by
   `CaptureStream::hand_over`, which is the whole reason that door exists, because tag 6's sequence
   is monotone across capturer rebuilds and a client that late-drops on it would go silent for the
   rest of the session. Three more things survive with it — the client's latched audio wish, the

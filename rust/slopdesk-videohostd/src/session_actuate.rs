@@ -64,7 +64,7 @@ use slopdesk_video::video_control::VideoControlMessage;
 use crate::sendlane::Job;
 use crate::session::Session;
 use crate::session_inbound::{SessionExtras, host_relative_millis};
-use crate::session_wiring::{KF_DUP_FAST_ATTACK_WINDOW, PACE_CHUNK_FRAGMENTS};
+use crate::session_wiring::{KF_DUP_FAST_ATTACK_WINDOW, PACE_CHUNK_FRAGMENTS, backpressure_skip};
 
 /// How often the host echoes its half of the stats HUD back to the client.
 ///
@@ -231,6 +231,21 @@ impl Session {
         }
         let job = Job::new(resend.into(), 0, PACE_CHUNK_FRAGMENTS, 0);
         if let Some(lane) = self.send_lane.as_ref() {
+            // The SAME gate a captured frame passes before it is encoded (`session_pump`), asked
+            // here for the same reason: the lane's depth is the congestion signal, and a burst of
+            // distinct NACKs under real loss would otherwise grow the queue without bound — deep
+            // enough to trip the capture side's own skip, drop live frames, and produce the loss
+            // that produces the next NACK. A repair the queue has no room for is a repair the
+            // client's own escalation answers once its grace expires; that path is why this one is
+            // allowed to say no. Never forced: a retransmit is never an anchor.
+            if backpressure_skip(
+                self.gates.backpressure_enabled,
+                lane.depth(),
+                usize::try_from(self.gates.backpressure_depth).unwrap_or_default(),
+                false,
+            ) {
+                return;
+            }
             lane.enqueue(job);
             return;
         }

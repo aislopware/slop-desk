@@ -40,8 +40,13 @@
 //! apart, which is a wire bug no gate on either side of the link can see.
 //!
 //! ## Lock order on the hot path
-//! Two short holds of `controllers`, two of `counters`, one of `state` per `media_flowing` check,
-//! and on a keyframe TWO of `streaming` — never nested, and NEVER held across a send or a framework
+//! On the CAPTURE side it is one hold and one only: [`EncoderSlot`] is read once per frame and
+//! released before the encode, because the encode is the framework call and a resize swapping the
+//! slot must never wait behind one.
+//!
+//! On the ENCODED side: two short holds of `controllers`, two of `counters`, one of `state` per
+//! `media_flowing` check, and on a keyframe TWO of `streaming` — never nested, and NEVER held
+//! across a send or a framework
 //! call. In order: `state` → `controllers` (the folds) → `streaming` (the self-heal disarm, cloned
 //! out and the property written on the far side of the guard) → `counters` (the count) →
 //! `streaming` again (the staged-token flush, under the same clone-out discipline) → packetize →
@@ -83,12 +88,12 @@
 //! feature was inert with every door in place. See [`crate::session_actuate`] for the arm.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread;
 use std::time::Duration;
 
 use slopdesk_apple_sck::CMSampleBuffer;
-use slopdesk_apple_vt::{CVImageBuffer, Timestamp};
+use slopdesk_apple_vt::{CVImageBuffer, Timestamp, image_size};
 use slopdesk_video::adaptive_fec::{self, multi_loss};
 use slopdesk_video::fragment::MAX_DATAGRAM_SIZE;
 use slopdesk_video::packetizer::PacketizeOptions;
@@ -477,17 +482,117 @@ fn trace(session: &Session, message: impl FnOnce() -> String) {
     }
 }
 
+/// The encoder a capture pump hands its frames to, and the buffer size that encoder will accept.
+///
+/// THE DOOR THE IN-PLACE RESIZE NEEDED. A `VTCompressionSession` cannot change dimensions, so a
+/// resize that keeps its `SCStream` running has to put a NEW encoder under a capturer whose sink
+/// was fixed at construction. One lock between the two makes that a swap between frames rather
+/// than a rebuild of everything downstream of it — see [`crate::session_resize`] for the order it
+/// is swapped in, which is the only place that decides anything about it.
+///
+/// The two members move TOGETHER, which is why they are one value: the size is what the encoder
+/// was opened at, and a pair that could be read half-updated is exactly the mismatched buffer the
+/// size is read to refuse.
+#[derive(Debug)]
+pub struct EncoderSlot {
+    /// The pair, behind the one lock the hot path takes and releases before it encodes anything.
+    held: Mutex<Held>,
+}
+
+/// What the slot holds. Private, because the pair is only ever read or replaced as a whole.
+#[derive(Debug)]
+struct Held {
+    /// The encoder this pump's frames go to.
+    encoder: Arc<Encoder>,
+    /// The buffer size that encoder was opened at, or `None` for a slot no swap has touched.
+    ///
+    /// `None` is what keeps the RESTART path byte-identical: a pump that was built with its
+    /// encoder and never re-pointed cannot have a stale-size buffer to refuse, so it does not
+    /// compare and cannot refuse one. The guard exists because of the swap and is armed by it.
+    accepts: Option<(usize, usize)>,
+}
+
+/// The encoder a swap retired, and the size it accepted — everything needed to put it back.
+///
+/// Answered rather than recomputed by the caller: the failure path must restore EXACTLY what was
+/// there, and a caller that re-derived the old pixel size from the pre-resize point size would be
+/// restoring a number the encoder was never opened with.
+#[derive(Debug)]
+pub struct Retired {
+    /// The pair the swap took out.
+    held: Held,
+}
+
+impl EncoderSlot {
+    /// A slot pointed at `encoder`, with the size guard disarmed.
+    #[must_use]
+    pub fn new(encoder: &Arc<Encoder>) -> Arc<Self> {
+        Arc::new(Self {
+            held: Mutex::new(Held {
+                encoder: Arc::clone(encoder),
+                accepts: None,
+            }),
+        })
+    }
+
+    /// Re-points the slot at `encoder`, answering what it displaced.
+    ///
+    /// The size arms the guard, converted the way [`crate::session_resize`] converts it for the
+    /// encoder's own shape — so the two agree by construction rather than by two spellings of the
+    /// same cast. A width no `usize` can hold arms NOTHING rather than a zero: the guard's job is
+    /// to refuse a stale buffer, and one that refused every buffer would be a dead stream.
+    pub fn swap(&self, encoder: &Arc<Encoder>, pixel_width: i32, pixel_height: i32) -> Retired {
+        let accepts = usize::try_from(pixel_width)
+            .ok()
+            .zip(usize::try_from(pixel_height).ok());
+        let replacement = Held {
+            encoder: Arc::clone(encoder),
+            accepts,
+        };
+        let mut held = self.locked();
+        Retired {
+            held: core::mem::replace(&mut held, replacement),
+        }
+    }
+
+    /// Puts a retired pair back, for a reconfigure the framework refused.
+    ///
+    /// After this the live stream and the slot agree again at the OLD size, which is what makes an
+    /// in-place failure a fall-through to the restart path rather than a broken session.
+    pub fn restore(&self, retired: Retired) {
+        *self.locked() = retired.held;
+    }
+
+    /// The pair, cloned out. ⚠️ The hot path, once per frame.
+    ///
+    /// `pub(crate)` for the hot path's sake and for one other reader: a swap is otherwise
+    /// unobservable, and "the old encoder is back at its old size" is the whole contract of a
+    /// refused reconfigure.
+    pub(crate) fn current(&self) -> (Arc<Encoder>, Option<(usize, usize)>) {
+        let held = self.locked();
+        (Arc::clone(&held.encoder), held.accepts)
+    }
+
+    fn locked(&self) -> MutexGuard<'_, Held> {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// What the capturer delivers into: the encoder, the audio lane, and the session's control channel.
 ///
 /// Holds a [`Weak`] session for [`EncodedPump`]'s reason — the session owns the capturer, which
 /// owns this — and STRONG handles to the encoder and the audio lane, which are this pump's to
-/// drive and which the live set replaces wholesale on a resize.
+/// drive and which the live set replaces wholesale on a restart resize.
 #[derive(Debug)]
 pub(crate) struct CapturePump {
     /// The session, or a dead handle once it has been dropped.
     session: Weak<Session>,
     /// The encoder every captured frame is handed to, on the capture queue.
-    encoder: Arc<Encoder>,
+    ///
+    /// Behind [`EncoderSlot`] rather than held directly, because an IN-PLACE resize re-points it
+    /// while this pump keeps delivering — the capturer's sink is fixed at construction and a
+    /// stream that is never restarted never gets a new one.
+    encoder: Arc<EncoderSlot>,
     /// The audio lane, or `None` when the tap was never armed.
     audio: Option<Arc<AudioSender>>,
     /// Which install this pump belongs to; zero until the bring-up adopts it.
@@ -508,10 +613,20 @@ impl CapturePump {
     ) -> Arc<Self> {
         Arc::new(Self {
             session: Arc::downgrade(session),
-            encoder: Arc::clone(encoder),
+            encoder: EncoderSlot::new(encoder),
             audio,
             generation: AtomicU64::new(0),
         })
+    }
+
+    /// The slot this pump reads its encoder out of, for whoever may re-point it.
+    ///
+    /// Handed to the live capture set at the install, because a resize reaches the capturer and
+    /// not the pump — see [`crate::session::CaptureStream::resize_in_place`], which is the only
+    /// caller of [`EncoderSlot::swap`].
+    #[must_use]
+    pub(crate) fn slot(&self) -> Arc<EncoderSlot> {
+        Arc::clone(&self.encoder)
     }
 
     /// Tells the pump which install it belongs to, once the live set exists.
@@ -552,20 +667,39 @@ impl CaptureEvents for CapturePump {
                 return;
             }
         }
+        // THE ENCODER, read out of the slot ONCE and used on the far side of the lock: an in-place
+        // resize re-points it between frames, and the guard may not be held across an encode.
+        let (encoder, accepts) = self.encoder.current();
+        // THE SIZE GUARD, armed only by a swap. A stream reconfigured in place applies its new
+        // configuration a frame or so after the encoder was replaced, so a buffer at the OLD size
+        // can still arrive — and it must not reach a resolution-fixed `VTCompressionSession`.
+        // Dropped rather than scaled: the next matching buffer is one frame away and it carries
+        // the IDR. A pump nobody swapped has no size to compare against, which is what leaves the
+        // restart path byte-identical.
+        if let Some((width, height)) = accepts
+            && image_size(image) != (width, height)
+        {
+            trace(&session, || {
+                let (delivered_width, delivered_height) = image_size(image);
+                format!(
+                    "frame dropped: {delivered_width}x{delivered_height} buffer, encoder is {width}x{height}"
+                )
+            });
+            return;
+        }
         // The four ways a frame reaches the encoder, in the Swift's own order — a refresh is
         // cheapest and most specific, a live frame is the fall-through. Every branch is the PLAN's,
         // decided by `slopdesk_video::capture_gates` before this call.
-        let encoded = if plan.ltr_refresh {
-            self.encoder.encode_ltr_refresh(image, presentation)
+        let outcome = if plan.ltr_refresh {
+            encoder.encode_ltr_refresh(image, presentation)
         } else if plan.crisp {
-            self.encoder.encode_crisp(image, presentation)
+            encoder.encode_crisp(image, presentation)
         } else if plan.compact {
-            self.encoder.encode_compact(image, presentation)
+            encoder.encode_compact(image, presentation)
         } else {
-            self.encoder
-                .encode_live(image, presentation, plan.force_keyframe, plan.per_frame_max_qp)
+            encoder.encode_live(image, presentation, plan.force_keyframe, plan.per_frame_max_qp)
         };
-        if let Err(error) = encoded {
+        if let Err(error) = outcome {
             // Reported, not recovered from: the encoder-rebuild ladder belongs to whoever owns the
             // resize and rebuild paths, and a half-ladder here would be a second answer to a
             // question that must have one.
@@ -891,6 +1025,59 @@ mod tests {
             thread::sleep(Duration::from_millis(2));
         }
         done()
+    }
+
+    #[test]
+    fn a_slot_nobody_swapped_refuses_no_buffer_at_all() {
+        let slot = EncoderSlot::new(&encoder());
+        let (_held, accepts) = slot.current();
+        assert_eq!(
+            accepts, None,
+            "the size guard is armed by a swap and by nothing else — a restart-path pump has no stale-size \
+             buffer to refuse and must not compare"
+        );
+    }
+
+    #[test]
+    fn a_swap_re_points_the_slot_and_arms_the_guard_at_the_new_size() {
+        let first = encoder();
+        let slot = EncoderSlot::new(&first);
+        let second = encoder();
+        let _retired = slot.swap(&second, 1280, 720);
+        let (held, accepts) = slot.current();
+        assert!(
+            Arc::ptr_eq(&held, &second),
+            "the frame after a swap must reach the encoder the swap named"
+        );
+        assert_eq!(
+            accepts,
+            Some((1280, 720)),
+            "a buffer at any other size is one the reconfigure has not applied yet"
+        );
+    }
+
+    #[test]
+    fn a_restore_puts_back_the_encoder_and_the_size_the_swap_took_out() {
+        let first = encoder();
+        let slot = EncoderSlot::new(&first);
+        // A slot that has ALREADY been swapped once, so the restore is proved to carry a size back
+        // rather than merely to disarm the guard — a resize is not always the first one.
+        let _first_swap = slot.swap(&first, 800, 600);
+        let second = encoder();
+        let retired = slot.swap(&second, 1280, 720);
+        slot.restore(retired);
+        let (held, accepts) = slot.current();
+        assert!(
+            Arc::ptr_eq(&held, &first),
+            "a refused reconfigure leaves the live stream at the OLD size, so the old encoder must be under \
+             it again"
+        );
+        assert_eq!(
+            accepts,
+            Some((800, 600)),
+            "the size restored is the one the encoder was opened at, never one recomputed from the window's \
+             geometry"
+        );
     }
 
     #[test]

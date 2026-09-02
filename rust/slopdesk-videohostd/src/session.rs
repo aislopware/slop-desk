@@ -65,6 +65,7 @@ use slopdesk_video::session_state::{SessionEffect, VideoSessionStateMachine};
 use slopdesk_video::swipe_nav_config::{NavHistoryFlags, SwipeNavHostConfig};
 use slopdesk_video::video_control::VideoControlMessage;
 
+use crate::capture::CannotResizeInPlace;
 use crate::encode::Encoder;
 use crate::env::Overlay;
 use crate::mux_lane::MuxLaneTransport;
@@ -152,14 +153,53 @@ pub trait CaptureStream: Send + Sync + core::fmt::Debug {
     /// [`Self::audio_lane`]. Answers `None` when this stream cannot be succeeded, in which case
     /// nothing was stopped and `capturer` is dropped un-started.
     ///
+    /// `encoder` is the successor's own [`crate::session_pump::EncoderSlot`] — the pump's, not
+    /// this set's. It travels with the capturer because the two were built together and only the
+    /// successor may re-point it: an in-place resize on a set that has been handed over would swap
+    /// an encoder under a stream that has already been stopped.
+    ///
     /// The successor is NOT started and NOT armed: the caller installs it under the generation
     /// first, because a stream started before its install is one a supersede cannot reclaim.
-    fn hand_over(&self, capturer: crate::capture::Capturer) -> Option<Arc<dyn CaptureStream>> {
+    fn hand_over(
+        &self,
+        capturer: crate::capture::Capturer,
+        encoder: Arc<crate::session_pump::EncoderSlot>,
+    ) -> Option<Arc<dyn CaptureStream>> {
         // Explicitly, not `let _ =`: a `Capturer` has a destructor, and the whole point of the
         // `None` arm is that the un-started stream is torn down HERE rather than surviving
         // as a leak.
         drop(capturer);
+        drop(encoder);
         None
+    }
+
+    /// Re-points this set's pump at `encoder` and reconfigures the LIVE stream to its size.
+    ///
+    /// The in-place resize's one effect, and the reason it is one door rather than two: the swap
+    /// must precede the reconfigure — new-size buffers have to reach the new-size encoder — and a
+    /// refused reconfigure must put the old encoder back before it answers, or the live stream
+    /// would be running at the old size into an encoder opened for the new one. After an `Err`
+    /// NOTHING has changed and the caller may fall through to the restart path with a set that is
+    /// still capturing.
+    ///
+    /// `pixel_width` × `pixel_height` is the size the encoder was OPENED at, which is also the
+    /// size the stream is reconfigured to. One pair, because a resize where they differed would be
+    /// the mismatch the pump's size guard exists to refuse.
+    ///
+    /// ⚠️ BLOCKS on the framework. Never call from the frame queue.
+    ///
+    /// # Errors
+    /// [`CannotResizeInPlace`]. The default is [`CannotResizeInPlace::NoStream`]: a set that is
+    /// not a live capture has nothing to reconfigure, and "fall back to the restart" is the only
+    /// honest answer a double can give.
+    fn resize_in_place(
+        &self,
+        encoder: &Arc<Encoder>,
+        pixel_width: i32,
+        pixel_height: i32,
+    ) -> Result<(), CannotResizeInPlace> {
+        let _ = (encoder, pixel_width, pixel_height);
+        Err(CannotResizeInPlace::NoStream)
     }
 
     /// Stops the capture half of this set, and only that half.

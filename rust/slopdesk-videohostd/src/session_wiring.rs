@@ -740,6 +740,26 @@ impl<Capture: ?Sized, Encode: ?Sized> Live<Capture, Encode> {
         self.generation
     }
 
+    /// Replaces the ENCODER alone, leaving the capture stream and the generation where they are.
+    ///
+    /// The in-place resize's install, and the reason it is not [`Self::install`]: that door means
+    /// "a new SET is live" and bumps the token every holder of the old one is guarded on. The
+    /// in-place path replaces no set — the same `SCStream`, the same capture pump and the same
+    /// heartbeat keep running — so a bump here would tell the pump it had been superseded, and the
+    /// next real capture death would be swallowed as a stale capturer's rather than tearing the
+    /// session down. A pane frozen for ever on its last decoded frame is exactly the failure
+    /// [`crate::session_pump::CapturePump`]'s own generation guard exists to avoid.
+    ///
+    /// Answers whether it happened: a stale caller replaces nothing, for [`Self::is_current`]'s
+    /// reason.
+    pub fn replace_encode(&mut self, generation: u64, encode: Arc<Encode>) -> bool {
+        if !self.is_current(generation) {
+            return false;
+        }
+        self.encode = Some(encode);
+        true
+    }
+
     /// Whether `generation` is still the installed one.
     ///
     /// The one question every post-suspension guard asks. A rebuild that resumes to find this false

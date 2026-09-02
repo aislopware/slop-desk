@@ -1209,10 +1209,17 @@ impl Inner {
         }
         let status = stream.resize(pixel_width, pixel_height);
         drop(held);
-        match status {
-            NO_ERROR => Ok(()),
-            status => Err(CannotResizeInPlace::Refused(status)),
+        if status != NO_ERROR {
+            return Err(CannotResizeInPlace::Refused(status));
         }
+        // THE CACHED FRAME IS THE OLD SIZE, and every consumer of it rebuilds a buffer at the size
+        // the BYTES describe: the static re-anchor would re-ship a stale-resolution frame into an
+        // encoder that has just been re-pointed at the new one, and the idle/scroll comparisons
+        // above the cadence gate would diff two different rasters. Dropped rather than converted —
+        // the next delivery is one frame away and it arrives at the new size. Everything else in
+        // `Live` is kept: the PTS counter must stay monotone and the decider's clock did not move.
+        self.lock_live().cached = None;
+        Ok(())
     }
 
     // -- the latches: PEEKED above every gate, DRAINED only below them

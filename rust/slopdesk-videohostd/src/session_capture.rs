@@ -57,14 +57,14 @@ use slopdesk_video::video_control::VideoControlMessage;
 use slopdesk_video::window_list::display_for_window_frame;
 
 use crate::audio::AudioSender;
-use crate::capture::{CaptureEvents, Capturer, Shape as CaptureShape};
+use crate::capture::{CannotResizeInPlace, CaptureEvents, Capturer, Shape as CaptureShape};
 use crate::encode::{EncodedFrameSink, Encoder, Shape as EncodeShape, const_qp, max_allowed_frame_qp};
 use crate::env::Overlay;
 use crate::injector::Injector;
 use crate::privacy::{HostGamma, PrivacyBlank};
 use crate::session::{CaptureStream, Session, Streaming};
 use crate::session_geometry::RegionState;
-use crate::session_pump::{CapturePump, EncodedPump};
+use crate::session_pump::{CapturePump, EncodedPump, EncoderSlot};
 use crate::session_wiring::{ClientLiveness, Live, Target, initial_governor};
 use crate::wake::HostDisplayWake;
 
@@ -313,7 +313,7 @@ impl Session {
 
         // 10. INSTALL THE SET, AND KEEP THE GENERATION. Everything below this line can race a
         //    teardown, and `generation` is the one token that answers whether it did.
-        let live_capture = Arc::new(LiveCapture::new(capturer, audio));
+        let live_capture = Arc::new(LiveCapture::new(capturer, pump.slot(), audio));
         // Spelled with the concrete parameter so the unsizing happens at the binding, not inside an
         // inference that would try to clone an `Arc<dyn CaptureStream>` that does not exist yet.
         let installed: Arc<dyn CaptureStream> = Arc::<LiveCapture>::clone(&live_capture);
@@ -651,6 +651,13 @@ impl Session {
 pub(crate) struct LiveCapture {
     /// The `SCStream` and its backlog.
     capturer: Capturer,
+    /// The slot the capturer's pump reads its encoder out of.
+    ///
+    /// Held HERE and nowhere else because the two halves of an in-place resize are the swap and
+    /// the reconfigure, and this is the one value that can reach both: the capturer's sink was
+    /// fixed at construction, so re-pointing the pump is the only way a new encoder gets under a
+    /// stream that is never restarted.
+    encoder: Arc<EncoderSlot>,
     /// The app-audio lane, or `None` when `SLOPDESK_AUDIO=0` masters the feature off end to end —
     /// in which case the capturer has no audio tap either.
     audio: Option<Arc<AudioSender>>,
@@ -667,9 +674,10 @@ pub(crate) struct LiveCapture {
 
 impl LiveCapture {
     /// A live set that is capturing but has no heartbeat yet.
-    fn new(capturer: Capturer, audio: Option<Arc<AudioSender>>) -> Self {
+    fn new(capturer: Capturer, encoder: Arc<EncoderSlot>, audio: Option<Arc<AudioSender>>) -> Self {
         Self {
             capturer,
+            encoder,
             audio,
             heartbeat: Heartbeat::idle(),
             stopped: AtomicBool::new(false),
@@ -782,10 +790,36 @@ impl CaptureStream for LiveCapture {
     /// The successor inherits the lane by CLONE, not by move: both sets hold it until the caller
     /// installs one, and an abandoned rebuild that never installs drops its clone without stopping
     /// a lane the live set is still sending on.
-    fn hand_over(&self, capturer: Capturer) -> Option<Arc<dyn CaptureStream>> {
-        let successor: Arc<dyn CaptureStream> = Arc::new(Self::new(capturer, self.audio.clone()));
+    fn hand_over(&self, capturer: Capturer, encoder: Arc<EncoderSlot>) -> Option<Arc<dyn CaptureStream>> {
+        let successor: Arc<dyn CaptureStream> = Arc::new(Self::new(capturer, encoder, self.audio.clone()));
         self.stop_capture_only();
         Some(successor)
+    }
+
+    /// The swap, then the reconfigure, and the swap BACK if the framework refused.
+    ///
+    /// In that order and no other. New-size buffers must reach the new-size encoder, so the pump
+    /// is re-pointed before the stream is told anything; the reconfigure is what can fail, and
+    /// after a failure the live stream is still running at the OLD size, so the old encoder has to
+    /// be under it again before this answers. What the restore puts back is what the swap took
+    /// out — see [`crate::session_pump::Retired`] — rather than a size recomputed from the
+    /// pre-resize geometry.
+    ///
+    /// The capturer is UNTOUCHED apart from its configuration: its governed-fps latch, its audio
+    /// forwarding gate, its heartbeat and its keyframe latch all belong to a stream that never
+    /// stopped, which is the whole saving this path exists for.
+    fn resize_in_place(
+        &self,
+        encoder: &Arc<Encoder>,
+        pixel_width: i32,
+        pixel_height: i32,
+    ) -> Result<(), CannotResizeInPlace> {
+        let retired = self.encoder.swap(encoder, pixel_width, pixel_height);
+        let outcome = self.capturer.resize(pixel_width, pixel_height);
+        if outcome.is_err() {
+            self.encoder.restore(retired);
+        }
+        outcome
     }
 
     /// Steps 1 and 3 of [`Self::stop`], without steps 2 and 4.
@@ -1102,6 +1136,24 @@ mod tests {
 
     impl LaneRetired for Registry {
         fn lane_retired(&self, _channel_id: u32) {}
+    }
+
+    /// A capture sink that answers nothing, for the one test that needs a real [`Capturer`] rather
+    /// than a double of one.
+    #[derive(Debug)]
+    struct Silent;
+
+    impl CaptureEvents for Silent {
+        fn frame(
+            &self,
+            _image: &slopdesk_apple_vt::CVImageBuffer,
+            _presentation: slopdesk_apple_vt::Timestamp,
+            _plan: crate::capture::FramePlan,
+        ) {
+        }
+        fn audio(&self, _sample: &slopdesk_apple_sck::CMSampleBuffer) {}
+        fn scroll(&self, _hint: slopdesk_video::scroll_reproject::ScrollHint) {}
+        fn capture_failed(&self) {}
     }
 
     /// A capture stream that records what was asked of it, so the ORDER of a teardown is a value a
@@ -1561,5 +1613,44 @@ mod tests {
                 "a disabled threshold never reaches the capturer"
             );
         }
+    }
+
+    #[test]
+    fn a_refused_in_place_resize_puts_the_old_encoder_back_under_the_live_stream() {
+        // A REAL `Capturer` with no stream behind it, which is the one in-place refusal reachable
+        // without a window server — and the one whose contract matters most: after it, the live
+        // set has to be exactly what the swap found, or the restart path inherits a stream running
+        // at one size into an encoder opened for another.
+        let sink: Arc<dyn CaptureEvents> = Arc::new(Silent);
+        let capturer = Capturer::new(CaptureShape::default(), sink, &Overlay::from_text(""));
+        let built = Arc::new(Encoder::new(
+            EncodeShape::default(),
+            None,
+            &Overlay::from_text(""),
+        ));
+        let slot = EncoderSlot::new(&built);
+        let live = LiveCapture::new(capturer, Arc::clone(&slot), None);
+        let incoming = Arc::new(Encoder::new(
+            EncodeShape::default(),
+            None,
+            &Overlay::from_text(""),
+        ));
+
+        let refused = live.resize_in_place(&incoming, 1280, 720);
+
+        assert_eq!(
+            refused,
+            Err(CannotResizeInPlace::NoStream),
+            "a capture that never started has no configuration to rewrite"
+        );
+        let (held, accepts) = slot.current();
+        assert!(
+            Arc::ptr_eq(&held, &built),
+            "the swap is undone by the refusal, or frames would go to an encoder the stream is not sized for"
+        );
+        assert_eq!(
+            accepts, None,
+            "the size guard goes back to disarmed with it — this pump has never been re-pointed"
+        );
     }
 }

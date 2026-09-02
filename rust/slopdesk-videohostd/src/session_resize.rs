@@ -28,38 +28,49 @@
 //! [`crate::windowplace::resize`]'s, and the in-place-versus-restart verdict is
 //! `slopdesk_video::capture_config::can_resize_in_place`'s. What is left here is order.
 //!
-//! ## ⚠️ The in-place fast path is NOT wired
-//! The Swift had one — reconfigure the LIVE `SCStream` to the new size and swap the encoder under
-//! it, saving the framework's ~120 ms stream spin-up — and every piece of it exists in Rust except
-//! the swap. [`crate::capture::Capturer::resize`] is the reconfigure and
-//! `slopdesk_video::capture_config::can_resize_in_place` is the verdict, but new-size buffers must
-//! reach a NEW-size encoder and there is nowhere to put one: `session_pump`'s capture pump holds
-//! its `Arc<Encoder>` immutably, a `Capturer`'s event sink is fixed at construction, and a
-//! `VTCompressionSession` cannot change dimensions — the Swift's `SwappableEncoder` box has no
-//! counterpart. Landing it needs ONE door in `crate::session_pump`: an encoder behind a lock and a
-//! `swap_encoder` that replaces it between frames. Until then the restart path below serves every
-//! resize, which is what the Swift's own fallback did on any in-place failure — correctness is
-//! unchanged and only the freeze is paid. The gate that would select it,
-//! `HostGates::in_place_resize_enabled`, is deliberately left unread rather than consulted for a
-//! branch that does not exist.
+//! ## The two paths, and why one of them cannot be trusted alone
+//! [`Session::swap_in_place`] reconfigures the LIVE `SCStream` to the new size and swaps a new
+//! encoder under it, saving the framework's ~120 ms stream spin-up — the resize freeze. It is
+//! selected by [`takes_in_place`], which is `SLOPDESK_INPLACE_RESIZE` composed with the capture's
+//! own shape through `slopdesk_video::capture_config::can_resize_in_place`, and it is a fast path
+//! and nothing more: EVERY way it can decline — gate off, a per-window capture, a poller-owned
+//! union crop, a framework that refused the new configuration — answers `None` and falls through
+//! to [`Session::rebuild_live_set`] below, with a set that is still capturing at the old size.
+//! That is what the Swift's own fallback did, and it is why correctness never rides on the fast
+//! path: the restart path serves every resize the fast one declines, byte for byte as it always
+//! did.
 //!
-//! ⚠️ GUI + TCC ONLY. Every step below the geometry read needs a window server, an Accessibility
-//! grant and a Screen-Recording grant, so nothing in this module is reachable from a test — which
-//! is why it takes no decisions of its own.
+//! The piece that used to be missing is [`crate::session_pump::EncoderSlot`]. A
+//! `VTCompressionSession` cannot change dimensions and a `Capturer`'s event sink is fixed at
+//! construction, so a stream that is never restarted needs its pump RE-POINTED at a new encoder
+//! between frames — the Swift's `SwappableEncoder` box, as one lock and one swap. The order the
+//! swap happens in is [`crate::session::CaptureStream::resize_in_place`]'s, because the swap and
+//! the reconfigure have to succeed or fail together.
+//!
+//! ⚠️ GUI + TCC ONLY from [`Session::resize_capture`]'s geometry read down: a window server, an
+//! Accessibility grant and a Screen-Recording grant. The two doors the fast path added are the
+//! exceptions and deliberately so — [`takes_in_place`] is a verdict over values, and
+//! [`Session::swap_in_place`] takes the encoder it installs as a PARAMETER rather than opening
+//! one, so the order it keeps is reachable from a test with an unopened encoder and a recorded
+//! capture stream. [`Session::open_encoder`] is the framework half, split out for exactly that
+//! reason.
 
 use std::sync::Arc;
 
 use slopdesk_apple_sck::CaptureRegion;
 use slopdesk_video::audio_source::{CHANNEL_COUNT, SAMPLE_RATE};
+use slopdesk_video::capture_config::can_resize_in_place;
 use slopdesk_video::congestion::{CongestionConfig, LiveCongestionController};
 use slopdesk_video::fps_governor::FpsGovernor;
 use slopdesk_video::geometry::{VideoRect, VideoSize};
+use slopdesk_video::host_gates::HostGates;
 use slopdesk_video::live_bitrate::{self, BITS_PER_PIXEL_KEY};
 use slopdesk_video::qp_control::{QpConfig, QpController};
 use slopdesk_video::session_state::{clamp_capture_size, effective_fps};
 use slopdesk_video::video_control::VideoControlMessage;
 
 use crate::capture::{CaptureEvents, Capturer, Shape as CaptureShape};
+use crate::diag;
 use crate::encode::{EncodedFrameSink, Encoder, Shape as EncodeShape, const_qp};
 use crate::session::{CaptureStream, Session};
 use crate::session_capture::pixels;
@@ -165,11 +176,14 @@ impl Session {
         let pixel_width = pixels(achieved_width, self.spec.capture_scale);
         let pixel_height = pixels(achieved_height, self.spec.capture_scale);
 
-        // 7. THE REBUILD. This is where the in-place fast path would branch — see the module note:
-        //    `slopdesk_video::capture_config::can_resize_in_place` and
-        //    `crate::capture::Capturer::resize` are both here, and the encoder swap they need is
-        //    not.
-        match self.rebuild_live_set(&outgoing, id, epoch, pixel_width, pixel_height, None) {
+        // 7. THE REBUILD, IN PLACE WHERE IT CAN BE. The fast path is asked FIRST and every way it
+        //    declines is a `None` that has touched nothing, so the restart below is reached with
+        //    the same live set it would have had if the fast path did not exist — which is what
+        //    makes the gate a pure latency knob rather than a second correctness story.
+        let rebuilt = self
+            .swap_in_place(&outgoing, epoch, pixel_width, pixel_height)
+            .unwrap_or_else(|| self.rebuild_live_set(&outgoing, id, epoch, pixel_width, pixel_height, None));
+        match rebuilt {
             // 8. THE ACK, LAST AND ONLY HERE. It may reach the client just BEFORE the first new-size
             //    keyframe, because starting a stream is not waiting for a frame from it. That is safe and it
             //    is the CLIENT's invariant, not this one's: adoption is frame-gated on a decoded buffer at
@@ -250,6 +264,187 @@ impl Session {
             .is_some_and(|live| live.live.is_current(generation))
     }
 
+    /// Opens a fresh encoder at `pixel_width` × `pixel_height`, answering it and the ceiling it
+    /// was opened at.
+    ///
+    /// BOTH resize paths' first act, and deliberately the same act: the ceiling is a function of
+    /// the resolution, so two spellings of this would let an in-place resize and a restart at the
+    /// same size open two differently-rated encoders and nothing downstream would notice. The
+    /// ceiling is answered rather than re-derived by the caller for the same reason — it is what
+    /// the controllers are re-seeded to once this encoder is the installed one.
+    ///
+    /// `None` is a refused open, which by contract has stopped NOTHING: the outgoing set is still
+    /// capturing at the old size and the only debt is the window.
+    ///
+    /// ⚠️ Needs `VideoToolbox`. This is the framework half of both paths, split out so the ORDER
+    /// either of them keeps is reachable from a test that hands in an unopened encoder.
+    fn open_encoder(self: &Arc<Self>, pixel_width: i32, pixel_height: i32) -> Option<(Arc<Encoder>, i64)> {
+        let bits_per_pixel =
+            live_bitrate::bits_per_pixel_from_env(self.overlay.get(BITS_PER_PIXEL_KEY).as_deref());
+        let ceiling = live_bitrate::target_bitrate(
+            i64::from(pixel_width),
+            i64::from(pixel_height),
+            self.spec.fps,
+            self.spec.bitrate,
+            bits_per_pixel,
+        );
+        let sink: Arc<dyn EncodedFrameSink> = EncodedPump::new(self);
+        let mut encoder = Encoder::new(
+            EncodeShape {
+                // The SAME conversion `EncoderSlot::swap` arms its size guard with, so the encoder
+                // and the buffer size it will accept cannot be two different numbers.
+                width: usize::try_from(pixel_width).unwrap_or_default(),
+                height: usize::try_from(pixel_height).unwrap_or_default(),
+                bitrate: ceiling,
+                fps: self.spec.fps,
+                full_range: self.gates.full_range,
+                ltr_enabled: self.gates.ltr_enabled,
+            },
+            Some(sink),
+            &self.overlay,
+        );
+        if encoder.open().is_err() {
+            return None;
+        }
+        Some((Arc::new(encoder), ceiling))
+    }
+
+    /// The IN-PLACE resize: a new encoder swapped under a capture stream that is never restarted.
+    ///
+    /// `None` is NOT TAKEN, and it is the only answer that leaves the caller work to do — see the
+    /// module note. Three things produce it and none of them has changed anything: the verdict
+    /// refused ([`takes_in_place`]), the framework refused the new configuration, or the encoder
+    /// refused to open — that last one answers [`Rebuilt::EncoderRefused`] rather than `None`
+    /// because a restart would only open the same encoder and fail the same way, and the window
+    /// roll-back is owed either way.
+    ///
+    /// The order, and what breaks if a step moves:
+    ///
+    /// 1. **The verdict, before a `VTCompressionSession` is opened.** An ineligible resize must
+    ///    cost nothing at all, because the restart path is about to open its own.
+    /// 2. **The encoder, before the stream is told anything.** A refused open must leave the live
+    ///    stream capturing at the old size, which is only true while nothing has been swapped.
+    /// 3. **The forced IDR, armed on the live capturer.** Belt and braces: a fresh
+    ///    `VTCompressionSession`'s first frame is an IDR by construction, which is the real
+    ///    guarantee — the capturer is NOT rebuilt here, so its own first-frame anchor does not
+    ///    fire. The latch's position relative to the swap is not load-bearing for that reason, and
+    ///    it sits here because this is the module that owns the order.
+    /// 4. **The swap and the reconfigure, as ONE act.** Both or neither: see
+    ///    [`crate::session::CaptureStream::resize_in_place`], which puts the old encoder back
+    ///    before it reports a refusal.
+    /// 5. **The supersede re-check, because step 4 blocked on the framework.** A teardown or a
+    ///    newer resize can complete inside it, and only the newest may install.
+    /// 6. **Drain the outgoing encoder, AFTER the swap.** In that order, because after the swap no
+    ///    frame routes to it any more — draining it first would race a frame still on its way in.
+    ///    There is no capture half to stop: that is the whole point.
+    /// 7. **Re-anchor what the new encoder does not inherit.** Three of
+    ///    [`Self::rebuild_live_set`]'s four, and never the fourth: the capturer is the SAME object,
+    ///    so its governed-fps latch, its audio forwarding gate and its heartbeat are already right,
+    ///    and re-asserting them would be re-asserting them onto themselves.
+    ///
+    /// ⚠️ Steps 2 and 4 need the frameworks. Steps 1 and 3–7 do not.
+    fn swap_in_place(
+        self: &Arc<Self>,
+        outgoing: &Replaced<'_>,
+        epoch: u32,
+        pixel_width: i32,
+        pixel_height: i32,
+    ) -> Option<Rebuilt> {
+        if !takes_in_place(&self.gates, outgoing.capture) {
+            return None;
+        }
+        let Some((encoder, ceiling)) = self.open_encoder(pixel_width, pixel_height) else {
+            return Some(Rebuilt::EncoderRefused);
+        };
+        self.install_in_place(outgoing, &encoder, ceiling, epoch, pixel_width, pixel_height)
+    }
+
+    /// Steps 3 to 7 of [`Self::swap_in_place`], over an encoder that is already open.
+    ///
+    /// Split at exactly this line because everything above it needs `VideoToolbox` and nothing
+    /// below it does: the reconfigure is the capture stream's, the install is two locks, and the
+    /// re-anchor is a rules-crate fold plus two property writes that a never-opened encoder
+    /// ignores. That makes the ORDER — which is the only thing this module owns — a value a test
+    /// can read.
+    fn install_in_place(
+        self: &Arc<Self>,
+        outgoing: &Replaced<'_>,
+        encoder: &Arc<Encoder>,
+        ceiling: i64,
+        epoch: u32,
+        pixel_width: i32,
+        pixel_height: i32,
+    ) -> Option<Rebuilt> {
+        outgoing.capture.request_keyframe();
+        if let Err(refused) = outgoing
+            .capture
+            .resize_in_place(encoder, pixel_width, pixel_height)
+        {
+            // The live stream kept the OLD configuration and the old encoder is back under it, so
+            // the only cost of this attempt is the one `VTCompressionSession` that is dropped
+            // here. Said out loud under the debug gate because the visible symptom — a resize that
+            // paid the ~120 ms freeze — has no other explanation on the wire.
+            if self.gates.debug_stderr {
+                diag::say(&format!(
+                    "in-place resize declined ({refused}) — restarting the stream"
+                ));
+            }
+            return None;
+        }
+        if !self.install_swapped(encoder, outgoing.generation, epoch) {
+            // A newer owner is live. The stream it owns is the one that was just reconfigured, so
+            // nothing is stopped and nothing is put back — see `Rebuilt::Superseded`.
+            return Some(Rebuilt::Superseded);
+        }
+        // The drain, once no capturer can reach the outgoing encoder any more.
+        outgoing.encoder.complete_frames();
+        let user_ceiling = self.user_bitrate_ceiling();
+        let user_cap = self.user_fps_cap();
+        let quantiser = const_qp(&self.overlay);
+        let (actuate, governed) = {
+            let mut controllers = self.locked_controllers();
+            // A new encoder session holds ZERO acknowledged long-term references, whether the
+            // stream under it was restarted or not.
+            controllers.reset_ltr_for_new_encoder();
+            let seeded = reseed(&mut controllers, self, ceiling, quantiser, user_ceiling);
+            let governed = controllers
+                .fps
+                .as_ref()
+                .map_or(self.spec.fps, FpsGovernor::current_fps);
+            drop(controllers);
+            (seeded, governed)
+        };
+        if let Some(target) = actuate {
+            let _actuated = encoder.set_live_bitrate(target);
+        }
+        // THE CADENCE, on the ENCODER only. `rebuild_live_set` writes it to both surfaces because
+        // its capturer is new and started at the base rate; this capturer never stopped and is
+        // still holding the governed step it was last given, so writing it again would be writing
+        // a value onto itself.
+        encoder.set_expected_frame_rate(effective_fps(governed, user_cap));
+        Some(Rebuilt::Live)
+    }
+
+    /// Installs `encoder` under the SAME capture stream and the SAME generation.
+    ///
+    /// The in-place path's [`Self::install_rebuilt`], and the difference between the two is the
+    /// generation: nothing here replaced the SET, so bumping it would tell the live capture pump
+    /// it had been superseded — see [`crate::session_wiring::Live::replace_encode`], which owns
+    /// that reasoning. Answers whether the install happened.
+    fn install_swapped(&self, encoder: &Arc<Encoder>, generation: u64, epoch: u32) -> bool {
+        if !self.resize_is_current(generation, epoch) {
+            return false;
+        }
+        let mut streaming = self.locked_streaming();
+        let installed = streaming
+            .as_mut()
+            .is_some_and(|live| live.live.replace_encode(generation, Arc::clone(encoder)));
+        // Dropped explicitly: the caller's next act is a framework drain, and a report fold on
+        // another thread must not wait behind it.
+        drop(streaming);
+        installed
+    }
+
     /// Replaces `outgoing` with a fresh encoder and capture stream at `pixel_width` ×
     /// `pixel_height`.
     ///
@@ -291,35 +486,12 @@ impl Session {
         pixel_height: i32,
         region: Option<CaptureRegion>,
     ) -> Rebuilt {
-        // 1. THE NEW ENCODER, BUILT AND OPENED BEFORE IT IS SHARED — `start_capture` step 3's
+        // 1. THE NEW ENCODER, BUILT AND OPENED BEFORE ANYTHING IS SHARED — `start_capture` step 3's
         //    reasoning, unchanged. The new resolution has a new ceiling; the controllers are
         //    re-anchored to it at step 7, once this encoder is the installed one.
-        let bits_per_pixel =
-            live_bitrate::bits_per_pixel_from_env(self.overlay.get(BITS_PER_PIXEL_KEY).as_deref());
-        let ceiling = live_bitrate::target_bitrate(
-            i64::from(pixel_width),
-            i64::from(pixel_height),
-            self.spec.fps,
-            self.spec.bitrate,
-            bits_per_pixel,
-        );
-        let sink: Arc<dyn EncodedFrameSink> = EncodedPump::new(self);
-        let mut encoder = Encoder::new(
-            EncodeShape {
-                width: usize::try_from(pixel_width).unwrap_or_default(),
-                height: usize::try_from(pixel_height).unwrap_or_default(),
-                bitrate: ceiling,
-                fps: self.spec.fps,
-                full_range: self.gates.full_range,
-                ltr_enabled: self.gates.ltr_enabled,
-            },
-            Some(sink),
-            &self.overlay,
-        );
-        if encoder.open().is_err() {
+        let Some((encoder, ceiling)) = self.open_encoder(pixel_width, pixel_height) else {
             return Rebuilt::EncoderRefused;
-        }
-        let encoder = Arc::new(encoder);
+        };
 
         // 2. THE LANE, THE PUMP, THE CAPTURER. The tap's SHAPE is derived from whether a lane
         //    exists rather than from a second read of `SLOPDESK_AUDIO`: the lane's existence IS
@@ -376,7 +548,7 @@ impl Session {
 
         // 5. THE SUCCESSOR. `None` means the outgoing stream was not one a rebuild can succeed —
         //    unreachable for a live set, and reported as a refusal rather than assumed away.
-        let Some(successor) = outgoing.capture.hand_over(capturer) else {
+        let Some(successor) = outgoing.capture.hand_over(capturer, pump.slot()) else {
             return Rebuilt::StreamRefused;
         };
 
@@ -477,6 +649,23 @@ impl Session {
     }
 }
 
+/// Whether this resize may reconfigure the live stream instead of rebuilding the set.
+///
+/// The gate composed with the capture's own shape, and the composition is
+/// `slopdesk_video::capture_config::can_resize_in_place`'s — asked rather than spelled, because
+/// `slopdesk-apple-sck` asks the same door about the same three terms one layer further down and
+/// two spellings of "eligible" would be a fast path that starts and then refuses itself.
+///
+/// This is the ONE place `SLOPDESK_INPLACE_RESIZE` is read on the host. Off ⇒ every resize takes
+/// the restart path, byte for byte as it did before the fast path existed.
+fn takes_in_place(gates: &HostGates, capture: &Arc<dyn CaptureStream>) -> bool {
+    can_resize_in_place(
+        gates.in_place_resize_enabled,
+        capture.is_display_anchored(),
+        capture.is_union_anchored(),
+    )
+}
+
 /// Re-seeds the rate controllers to a rebuild's ceiling, from the configuration they already hold.
 ///
 /// The tunables are read off the LIVE controllers rather than re-resolved from the overlay, and
@@ -563,4 +752,422 @@ fn clamped_axis(points: f64) -> u16 {
         VideoSize::new(f64::from(u16::MAX), f64::from(u16::MAX)),
     );
     axis
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::expect_used,
+        reason = "a panic in a test is the failure report, not a runtime fault"
+    )]
+
+    use std::sync::{Mutex, PoisonError, Weak};
+
+    use slopdesk_video::host_gates::GateContext;
+    use slopdesk_video::recovery_idr::RecoveryIdrConfig;
+    use slopdesk_video::recovery_routing::VideoChannel;
+    use slopdesk_video::session_state::{PROTOCOL_VERSION, VideoSessionStateMachine};
+
+    use super::*;
+    use crate::capture::CannotResizeInPlace;
+    use crate::encode::Shape as EncodeShape;
+    use crate::env::Overlay;
+    use crate::mux_lane::{LaneControl, LaneRetired, MuxLaneTransport};
+    use crate::mux_sink::MuxSinkTable;
+    use crate::session::Streaming;
+    use crate::session_geometry::RegionState;
+    use crate::session_pump::EncoderSlot;
+    use crate::session_wiring::{Live, SessionSpec};
+
+    /// The two timings a live daemon resolves before it folds the gate table, spelled the way the
+    /// rules crate spells them — a made-up pair would exercise a clamp that never runs.
+    const CONTEXT: GateContext = GateContext {
+        scroll_resampler_active: false,
+        keepalive_interval: slopdesk_video::keepalive::KEEPALIVE_INTERVAL_SECONDS,
+        idle_timeout: slopdesk_video::keepalive::IDLE_TIMEOUT_SECONDS,
+    };
+
+    /// A shared flow with no socket under it. Nothing here is about what reached the wire.
+    #[derive(Debug, Default)]
+    struct Flow;
+
+    impl LaneControl for Flow {
+        fn admit(&self, _channel_id: u32) {}
+        fn retire(&self, _channel_id: u32) {}
+        fn send(&self, _datagram: &[u8], _channel: VideoChannel, _channel_id: u32) {}
+    }
+
+    /// The registry's half of a lane's retirement, which a test session never consults.
+    #[derive(Debug, Default)]
+    struct Registry;
+
+    impl LaneRetired for Registry {
+        fn lane_retired(&self, _channel_id: u32) {}
+    }
+
+    /// A capture stream of a chosen SHAPE that records the order it was driven in.
+    ///
+    /// The order is the only thing this module owns, so the double answers it as a list rather
+    /// than as counters: "the IDR was armed before the reconfigure" and "nothing was stopped" are
+    /// the same assertion read two ways.
+    #[derive(Debug)]
+    struct Recorder {
+        /// What [`CaptureStream::is_display_anchored`] answers.
+        display_anchored: bool,
+        /// What [`CaptureStream::is_union_anchored`] answers.
+        union_anchored: bool,
+        /// What [`CaptureStream::resize_in_place`] answers.
+        reconfigure: Result<(), CannotResizeInPlace>,
+        /// Every door that was opened, in the order it was opened.
+        calls: Mutex<Vec<&'static str>>,
+        /// The size the reconfigure was asked for, once it has been asked.
+        asked: Mutex<Option<(i32, i32)>>,
+    }
+
+    impl Recorder {
+        /// A capture the fast path is eligible over, which answers `reconfigure` when asked.
+        fn eligible(reconfigure: Result<(), CannotResizeInPlace>) -> Arc<Self> {
+            Arc::new(Self {
+                display_anchored: true,
+                union_anchored: false,
+                reconfigure,
+                calls: Mutex::new(Vec::new()),
+                asked: Mutex::new(None),
+            })
+        }
+
+        fn note(&self, door: &'static str) {
+            self.calls
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(door);
+        }
+
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        }
+
+        fn asked(&self) -> Option<(i32, i32)> {
+            *self.asked.lock().unwrap_or_else(PoisonError::into_inner)
+        }
+    }
+
+    impl CaptureStream for Recorder {
+        fn stop(&self) {
+            self.note("stop");
+        }
+        fn set_audio_forwarding(&self, _enabled: bool) {
+            self.note("set_audio_forwarding");
+        }
+        fn set_governed_fps(&self, _fps: i32) {
+            self.note("set_governed_fps");
+        }
+        fn set_client_silence_paused(&self, _paused: bool) {}
+        fn request_keyframe(&self) {
+            self.note("request_keyframe");
+        }
+        fn request_ltr_refresh(&self) {}
+        fn stop_capture_only(&self) {
+            self.note("stop_capture_only");
+        }
+        fn arm_heartbeat(&self, _session: &Arc<Session>) {
+            self.note("arm_heartbeat");
+        }
+        fn is_display_anchored(&self) -> bool {
+            self.display_anchored
+        }
+        fn is_union_anchored(&self) -> bool {
+            self.union_anchored
+        }
+        fn resize_in_place(
+            &self,
+            _encoder: &Arc<Encoder>,
+            pixel_width: i32,
+            pixel_height: i32,
+        ) -> Result<(), CannotResizeInPlace> {
+            self.note("resize_in_place");
+            *self.asked.lock().unwrap_or_else(PoisonError::into_inner) = Some((pixel_width, pixel_height));
+            self.reconfigure
+        }
+    }
+
+    /// A listening session over a lane with no socket under it.
+    ///
+    /// The registry handle is returned with it because the lane holds only a `Weak` to it, and a
+    /// dropped registry would make every retirement a no-op for a reason the test did not choose.
+    fn session(edit: impl FnOnce(&mut HostGates)) -> (Arc<Session>, Arc<Registry>) {
+        let registry = Arc::new(Registry);
+        // The unsizing happens at this typed binding, not inside `downgrade`. `registry` is
+        // returned to the caller, so the allocation outlives the strong handle dropped here.
+        let watcher: Arc<dyn LaneRetired> = registry.clone();
+        let observer: Weak<dyn LaneRetired> = Arc::downgrade(&watcher);
+        let flow: Arc<dyn LaneControl> = Arc::new(Flow);
+        let transport = Arc::new(MuxLaneTransport::new(
+            1,
+            flow,
+            Arc::new(MuxSinkTable::new()),
+            observer,
+        ));
+        let mut gates = HostGates::from_env(&[], CONTEXT);
+        // The paced drain owns a thread of its own and nothing here is about pacing.
+        gates.send_lane_enabled = false;
+        edit(&mut gates);
+        let session = Arc::new(Session::new(
+            SessionSpec {
+                target: Target::Window {
+                    id: 7,
+                    pid: 42,
+                    size_override: None,
+                    resize_limit: None,
+                },
+                capture_scale: 2.0,
+                bitrate: 12_000_000,
+                fps: 60,
+            },
+            transport,
+            gates,
+            RecoveryIdrConfig::default(),
+            Overlay::from_text(""),
+            VideoSessionStateMachine::new(1, false),
+        ));
+        (session, registry)
+    }
+
+    /// Drives the state machine to STREAMING through its own hello, and DISCARDS the effects: the
+    /// capture arm needs a window server and nothing here is about the bring-up.
+    fn flowing(session: &Session) {
+        let mut state = session.locked_state();
+        let _listening = state.start();
+        let _accepted = state.handle_control(
+            &VideoControlMessage::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                requested_window_id: 7,
+                viewport: VideoSize::new(800.0, 600.0),
+            },
+            VideoRect::xywh(0.0, 0.0, 0.0, 0.0),
+            |_, _| Some((800, 600)),
+            |_, _| None,
+            |_, _| None,
+        );
+        assert!(state.media_flowing(), "the hello must have been accepted");
+        drop(state);
+    }
+
+    /// An encoder that was never opened, which is all any test here needs one to be.
+    ///
+    /// Every property write below ignores it — `set_live_bitrate`, `set_expected_frame_rate` and
+    /// `complete_frames` all no-op with no session behind them — which is exactly the split
+    /// [`Session::open_encoder`] exists to make: the order runs, the framework does not.
+    fn encoder() -> Arc<Encoder> {
+        Arc::new(Encoder::new(
+            EncodeShape::default(),
+            None,
+            &Overlay::from_text(""),
+        ))
+    }
+
+    /// Installs `recorder` and a fresh encoder as the live set, answering the generation and the
+    /// encoder a successful swap has to displace.
+    fn install(session: &Session, recorder: &Arc<Recorder>) -> (u64, Arc<Encoder>) {
+        let outgoing = encoder();
+        let installed: Arc<dyn CaptureStream> = recorder.clone();
+        let mut live = Live::new();
+        let generation = live.install(installed, Arc::clone(&outgoing));
+        *session.locked_streaming() = Some(Streaming {
+            live,
+            holds_display_wake: false,
+            audio_enabled: false,
+            geometry: None,
+            cursor: None,
+            region: RegionState::default(),
+        });
+        (generation, outgoing)
+    }
+
+    /// The encoder the live set currently holds.
+    fn installed_encoder(session: &Session) -> Arc<Encoder> {
+        session
+            .locked_streaming()
+            .as_ref()
+            .and_then(|streaming| streaming.live.encode.clone())
+            .expect("the test installed one")
+    }
+
+    #[test]
+    fn the_gate_off_keeps_an_otherwise_eligible_capture_on_the_restart_path() {
+        let (session, _registry) = session(|gates| gates.in_place_resize_enabled = false);
+        let capture: Arc<dyn CaptureStream> = Recorder::eligible(Ok(()));
+        assert!(
+            !takes_in_place(&session.gates, &capture),
+            "SLOPDESK_INPLACE_RESIZE=0 must reach the restart path with nothing tried first"
+        );
+    }
+
+    #[test]
+    fn a_display_anchored_capture_under_the_gate_takes_the_fast_path() {
+        // The gate is set EXPLICITLY, and the assertion below it is why: the shipped default is
+        // OFF until the branch has run on a real host, so a test that relied on the default would
+        // be asserting the operator's setting rather than this door's rule.
+        let (session, _registry) = session(|gates| gates.in_place_resize_enabled = true);
+        let capture: Arc<dyn CaptureStream> = Recorder::eligible(Ok(()));
+        assert!(takes_in_place(&session.gates, &capture));
+    }
+
+    #[test]
+    fn a_capture_with_no_configuration_to_rewrite_never_takes_the_fast_path() {
+        // Gate ON, so a `false` below is the SHAPE's refusal and not the operator's.
+        let (session, _registry) = session(|gates| gates.in_place_resize_enabled = true);
+        // The per-window compositor: the crop follows the window's own backing store, so there is
+        // no live configuration a reconfigure could drive.
+        let per_window = Arc::new(Recorder {
+            display_anchored: false,
+            union_anchored: false,
+            reconfigure: Ok(()),
+            calls: Mutex::new(Vec::new()),
+            asked: Mutex::new(None),
+        });
+        let per_window: Arc<dyn CaptureStream> = per_window;
+        assert!(!takes_in_place(&session.gates, &per_window));
+
+        // The DIALOG-EXPAND union crop, which the geometry poller owns and re-targets itself.
+        let union = Arc::new(Recorder {
+            display_anchored: true,
+            union_anchored: true,
+            reconfigure: Ok(()),
+            calls: Mutex::new(Vec::new()),
+            asked: Mutex::new(None),
+        });
+        let union: Arc<dyn CaptureStream> = union;
+        assert!(!takes_in_place(&session.gates, &union));
+    }
+
+    #[test]
+    fn a_swap_installs_the_new_encoder_under_the_same_stream_and_the_same_generation() {
+        let (session, _registry) = session(|gates| gates.in_place_resize_enabled = true);
+        flowing(&session);
+        let recorder = Recorder::eligible(Ok(()));
+        let (generation, outgoing) = install(&session, &recorder);
+        let capture: Arc<dyn CaptureStream> = recorder.clone();
+        let replaced = Replaced {
+            capture: &capture,
+            encoder: &outgoing,
+            generation,
+        };
+        let incoming = encoder();
+
+        let rebuilt = session.install_in_place(&replaced, &incoming, 9_000_000, 4, 1280, 720);
+
+        assert_eq!(
+            rebuilt,
+            Some(Rebuilt::Live),
+            "an accepted reconfigure is the one outcome that may be acknowledged"
+        );
+        assert_eq!(
+            recorder.calls(),
+            vec!["request_keyframe", "resize_in_place"],
+            "the IDR is armed before the stream is told anything, and NOTHING was stopped — a capture \
+             re-dial is the ~120 ms freeze this path exists to avoid"
+        );
+        assert_eq!(
+            recorder.asked(),
+            Some((1280, 720)),
+            "the stream is reconfigured to the size the encoder was opened at, or the pump's size guard \
+             would refuse every buffer"
+        );
+        assert!(
+            Arc::ptr_eq(&installed_encoder(&session), &incoming),
+            "the live set must hold the encoder the frames now go to"
+        );
+        assert!(
+            session
+                .locked_streaming()
+                .as_ref()
+                .is_some_and(|streaming| streaming.live.is_current(generation)),
+            "the SET was not replaced, so bumping the generation would tell the live capture pump it had \
+             been superseded and swallow the next real capture death"
+        );
+    }
+
+    #[test]
+    fn a_refused_reconfigure_falls_through_with_the_old_encoder_still_installed() {
+        let (session, _registry) = session(|gates| gates.in_place_resize_enabled = true);
+        flowing(&session);
+        let recorder = Recorder::eligible(Err(CannotResizeInPlace::Refused(-6661)));
+        let (generation, outgoing) = install(&session, &recorder);
+        let capture: Arc<dyn CaptureStream> = recorder.clone();
+        let replaced = Replaced {
+            capture: &capture,
+            encoder: &outgoing,
+            generation,
+        };
+
+        let rebuilt = session.install_in_place(&replaced, &encoder(), 9_000_000, 4, 1280, 720);
+
+        assert_eq!(
+            rebuilt, None,
+            "a refusal is NOT TAKEN: the caller owes the restart path, which is what serves the resize"
+        );
+        assert!(
+            Arc::ptr_eq(&installed_encoder(&session), &outgoing),
+            "the live stream kept the old configuration, so the old encoder must still be the installed one"
+        );
+        assert!(
+            !recorder.calls().contains(&"stop_capture_only"),
+            "a declined fast path must hand the restart path a set that is still capturing"
+        );
+    }
+
+    #[test]
+    fn a_swap_that_a_newer_epoch_overtook_installs_nothing() {
+        let (session, _registry) = session(|gates| gates.in_place_resize_enabled = true);
+        flowing(&session);
+        let recorder = Recorder::eligible(Ok(()));
+        let (generation, outgoing) = install(&session, &recorder);
+        // Moved rather than cloned: this test reads the live set afterwards, never the double.
+        let capture: Arc<dyn CaptureStream> = recorder;
+        let replaced = Replaced {
+            capture: &capture,
+            encoder: &outgoing,
+            generation,
+        };
+        // A newer resize committed its epoch while this one was blocked on the framework.
+        let _committed = session.locked_state().handle_control(
+            &VideoControlMessage::ResizeRequest {
+                desired: VideoSize::new(400.0, 300.0),
+                epoch: 9,
+            },
+            VideoRect::xywh(0.0, 0.0, 0.0, 0.0),
+            |_, _| None,
+            |_, _| Some((400, 300)),
+            |_, _| None,
+        );
+        assert_eq!(
+            session.locked_state().last_resize_epoch(),
+            9,
+            "the machine commits the newer epoch SYNCHRONOUSLY, before its effect runs"
+        );
+
+        let rebuilt = session.install_in_place(&replaced, &encoder(), 9_000_000, 4, 1280, 720);
+
+        assert_eq!(
+            rebuilt,
+            Some(Rebuilt::Superseded),
+            "only the newest epoch may install, and a superseded resize acknowledges nothing"
+        );
+        assert!(
+            Arc::ptr_eq(&installed_encoder(&session), &outgoing),
+            "the newer owner's set is the one that is live; this one installs nothing"
+        );
+    }
+
+    #[test]
+    fn an_unswapped_slot_keeps_the_encoder_a_bring_up_gave_it() {
+        // The gate-OFF invariant, read at the door the guard lives behind: a pump that was never
+        // re-pointed compares no sizes and hands every buffer to the encoder it was built with.
+        let built = encoder();
+        let slot = EncoderSlot::new(&built);
+        let (held, accepts) = slot.current();
+        assert!(Arc::ptr_eq(&held, &built));
+        assert_eq!(accepts, None);
+    }
 }
