@@ -25,7 +25,7 @@ class Slopdesk < Formula
   depends_on macos: :tahoe
 
   def install
-    # All ten, in one flat `bin`. Not tidiness — `slopdesk-agenthooks` installs the relay from
+    # All thirteen, in one flat `bin`. Not tidiness — `slopdesk-agenthooks` installs the relay from
     # `executable.parent()/slopdesk-hook`, so tucking the daemons into `libexec` would leave the
     # hook install with nothing to copy (`docs/49`).
     bin.install "slopdesk",
@@ -39,11 +39,12 @@ class Slopdesk < Formula
                 "slopdesk-dropd",
                 "slopdesk-inspectord",
                 "slopdesk-androidd",
-                "slopdesk-codeseed"
+                "slopdesk-codeseed",
+                "slopdesk-videohostd"
 
     # The manifest travels with the install, one directory ABOVE `bin`, which is where
     # `slopdesk sidecars` looks after resolving its own argv[0] through Homebrew's symlink farm.
-    # Without it an upgrade cannot say which of the twelve binaries actually changed, and the
+    # Without it an upgrade cannot say which of the thirteen binaries actually changed, and the
     # honest fallback — "everything changed" — is the all-or-nothing behaviour it exists to end.
     prefix.install "MANIFEST.json"
   end
@@ -93,6 +94,13 @@ class Slopdesk < Formula
       `slopdesk sidecars` says what the last upgrade changed, binary by binary, and what each
       change means for what is currently running.
 
+      The GUI video host is `slopdesk-videohostd`: the remote-window pane in SlopDesk.app dials
+      it on UDP 9000/9001, and it needs Screen Recording and Accessibility, which macOS grants
+      to the process that asks. Run it from a Terminal on the desktop you share (the grant then
+      belongs to that Terminal), or give it a launch agent of its own from a checkout with
+      `just videohostd-install` so the grant is keyed to the binary itself. Not started by
+      `brew services`: a formula carries one service, and superd is it.
+
       This formula is the only source of the command-line tools. The cask ships one app bundle
       and nothing else — SlopDesk.app links `slopdesk` at launch from a copy beside its own
       executable, and the shipped bundle carries none, so that link is a no-op.
@@ -105,6 +113,8 @@ class Slopdesk < Formula
     # The daemon the tap shipped without for four releases. Asking it for its own version proves
     # the binary is present AND runnable, which `bin.install` alone does not.
     assert_match "slopdesk-superd", shell_output("#{bin}/slopdesk-superd --version")
+    # The GUI video host, which no release shipped before 0.5: the pane that dials it hung silently.
+    assert_match "slopdesk-videohostd", shell_output("#{bin}/slopdesk-videohostd --version")
     # The manifest is what makes a per-binary upgrade answerable at all.
     assert_predicate prefix/"MANIFEST.json", :exist?
     assert_match "TOOL", shell_output("#{bin}/slopdesk sidecars")

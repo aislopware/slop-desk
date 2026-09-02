@@ -351,6 +351,21 @@ pub fn rejection_message(title: &str) -> String {
     format!("{name} is no longer available on the host.")
 }
 
+/// What the placeholder says when NOTHING answered the hello — no `slopdesk-videohostd` on the
+/// host at all, or one on other ports — as opposed to a host that refused.
+///
+/// Names the address the pane dialled and the daemon that would have answered, because the fix is
+/// on the host and the person reading this is at the client. An empty host reads as the loopback
+/// default rather than as `:9000`.
+#[must_use]
+pub fn unreachable_message(host: &str, media_port: u16) -> String {
+    let host = if host.is_empty() { "127.0.0.1" } else { host };
+    format!(
+        "No video host answered at {host}:{media_port}. Start slopdesk-videohostd on the host (`just \
+         videohostd-install` in a checkout) and open the window again."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -361,7 +376,7 @@ mod tests {
     use super::{
         GeometryUpdate, ImmersiveCommit, NetworkSample, SeededCaps, Size, admits_size, admits_stream_fps,
         admits_stream_kbps, descriptor_title, geometry_update, immersive_commit, network_reading,
-        parse_window_id, rejection_message, seeded_caps,
+        parse_window_id, rejection_message, seeded_caps, unreachable_message,
     };
 
     /// The whole of Swift's `CharacterSet.whitespaces`, measured against the Swift runtime rather
@@ -639,5 +654,19 @@ mod tests {
             assert!(!rejection_message(title).is_empty());
             assert!(!descriptor_title(title, 0).is_empty());
         }
+    }
+
+    /// The unreachable sentence names the address that was dialled and the daemon that would have
+    /// answered, and an empty host is spelled as the loopback default it means.
+    #[test]
+    fn the_unreachable_sentence_names_the_address_and_the_daemon() {
+        let sentence = unreachable_message("100.107.14.250", 9000);
+        assert!(
+            sentence.starts_with("No video host answered at 100.107.14.250:9000."),
+            "{sentence}"
+        );
+        assert!(sentence.contains("slopdesk-videohostd"));
+        assert!(unreachable_message("", 9000).contains("127.0.0.1:9000"));
+        assert!(!unreachable_message("", 0).is_empty());
     }
 }

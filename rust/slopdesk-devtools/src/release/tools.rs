@@ -66,6 +66,10 @@ pub const RUST_CRATE_TOOLS: &[&str] = &[
     "slopdesk-inspectord",
     "slopdesk-androidd",
     "slopdesk-codeseed",
+    // The GUI video host (`docs/61`). Last, because it was the last to ship: it lived in a
+    // checkout only until 2026-09-02, while the client's remote-window pane dialled its ports on
+    // every `brew install` and waited for a hello nobody would answer (`docs/70` §2b).
+    "slopdesk-videohostd",
 ];
 
 /// Every cargo-built tool, root members first, in declaration order.

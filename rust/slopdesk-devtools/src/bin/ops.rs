@@ -26,7 +26,7 @@ usage: slopdesk-ops [--repo-root DIR] <verb> [options]
 
   restart-hostd [--no-build] [--stop] [--status]
                                         rebuild, stop and restart the recorded hostd
-  install <superd|screend|hostd> [--force] [--uninstall]
+  install <superd|screend|hostd|videohostd> [--force] [--uninstall]
                                         the LaunchAgent for a daemon — hostd included, which is
                                         the only way to give a cold machine its first host
   regenerate <macos|ios>                regenerate a client spec's .xcodeproj from the spec
@@ -133,10 +133,10 @@ fn restart_hostd(root: &Path, arguments: &[String]) -> ExitCode {
     finish(hostd::run(root, plan))
 }
 
-/// `install <superd|screend|hostd> [--force] [--uninstall]`.
+/// `install <superd|screend|hostd|videohostd> [--force] [--uninstall]`.
 fn install(root: &Path, arguments: &[String]) -> ExitCode {
     let Some((name, rest)) = arguments.split_first() else {
-        eprintln!("slopdesk-ops: install needs a daemon name (superd, screend or hostd)");
+        eprintln!("slopdesk-ops: install needs a daemon name (superd, screend, hostd or videohostd)");
         return ExitCode::from(2);
     };
     let agent = match launchd::by_name(name) {

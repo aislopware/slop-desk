@@ -170,7 +170,7 @@ final class MacMetalLayerBackedView: NSView {
     /// after the host rejected the session (`helloAck(accepted: false)`), the pipeline having already
     /// torn down with NO auto-rebuild, so the pane model can fall back to the picker/error state.
     /// Set by the representable.
-    var onSessionRejectedReady: (() -> Void)?
+    var onSessionRejectedReady: ((VideoSessionRefusal) -> Void)?
     /// VIEWPORT CONTROLS: the canvas publishes a client-viewport command sink through this (and `nil` on
     /// teardown), so the pane's bottom control bar drives zoom / pan-lock. The byte is `RemoteWindowModel.
     /// ViewportCommand` (0 zoom-in / 1 zoom-out / 2 reset / 3 lock-on / 4 lock-off / 5 fit-to-pane).
@@ -494,7 +494,7 @@ final class MacMetalLayerBackedView: NSView {
         // if unbound). The pipeline already tore itself down with NO auto-rebuild before firing. The
         // closure reads the live `onSessionRejectedReady`, so updateNSView refreshing the seam closure
         // is picked up.
-        pipeline.onSessionRejected = { [weak self] in self?.onSessionRejectedReady?() }
+        pipeline.onSessionRejected = { [weak self] refusal in self?.onSessionRejectedReady?(refusal) }
         // Wire the SwiftUI overlay's buttons to THIS view's pipeline (live connection only). No fit/fill
         // toggle: the ACTUAL-SIZE viewport auto-drives content mode, so only the 1× reset wires.
         if connection != nil, let controls {

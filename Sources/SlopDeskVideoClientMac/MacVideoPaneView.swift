@@ -188,7 +188,7 @@ public struct MacVideoPaneSpec {
     /// refusal). The pipeline has already torn down WITHOUT the bye path's auto-rebuild; the pane
     /// model should leave its live surface and fall back to the picker/error state. `nil` ⇒ no
     /// canvas wired it (the pane just stays down).
-    let onSessionRejected: (() -> Void)?
+    let onSessionRejected: ((VideoSessionRefusal) -> Void)?
 
     /// The existing seam signature (title-only): describes the Metal-backed view chrome
     /// without a live connection. Kept so `VideoWindowFactory` callers compile.
@@ -249,7 +249,7 @@ public struct MacVideoPaneSpec {
             _ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool,
         ) -> Void)?) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
-        onSessionRejected: (() -> Void)? = nil,
+        onSessionRejected: ((VideoSessionRefusal) -> Void)? = nil,
     ) {
         self.title = title
         self.targetAppName = targetAppName

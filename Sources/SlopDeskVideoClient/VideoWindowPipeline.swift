@@ -79,7 +79,13 @@ package final class VideoWindowPipeline {
     /// would re-hello the same doomed request forever). The view forwards it to the pane model so
     /// the pane leaves its live surface and falls back to the picker/error state. Set by the view
     /// in `activate`; `nil` ⇒ standalone/preview (the pane just stays down).
-    package var onSessionRejected: (() -> Void)?
+    ///
+    /// Also fired, as ``VideoSessionRefusal/hostUnreachable``, by the stall monitor when NOTHING has
+    /// answered inside ``KeepaliveTiming/helloDeadline`` of activation: no control datagram at all,
+    /// so no `slopdesk-videohostd` at the dialled address. The same teardown, a different sentence.
+    package var onSessionRejected: ((VideoSessionRefusal) -> Void)?
+    /// Uptime at the last `activate`, for the hello deadline; `nil` while down.
+    private var activatedAt: TimeInterval?
     /// The ~1 s monitor Task evaluating ``StreamStallPolicy`` over the session's liveness snapshot.
     /// Started in `activate`, cancelled in `deactivate`. The LATCH deliberately lives on the
     /// pipeline (not the task): a host-ended rebuild replaces the session + monitor, and the scrim
@@ -260,6 +266,7 @@ package final class VideoWindowPipeline {
         guard let connection else { return } // no live host: chrome only (placeholder owns the idle UI)
         if activeConnection == connection, session != nil { return }
         deactivate()
+        activatedAt = ProcessInfo.processInfo.systemUptime
         activeConnection = connection
         // Remember what a host-ended rebuild needs (weak view/layer — the pane may be gone by the time
         // a bye lands; then the rebuild is a no-op).
@@ -584,12 +591,12 @@ package final class VideoWindowPipeline {
                 // self-heals instead of freezing the pane with dead input.
                 Task { @MainActor in self?.rebuildAfterHostEndedSession() }
             },
-            notifySessionRejected: { [weak self] in
+            notifySessionRejected: { [weak self] refusal in
                 // TERMINAL REFUSAL: the host said NO (helloAck accepted:false — window gone /
                 // version mismatch). Hop to main and tear down WITHOUT rebuilding — rebuilding
                 // would re-hello the same doomed request forever (the mint-failure retry wedge,
                 // one layer up). The view surfaces it to the pane (picker/error state).
-                Task { @MainActor in self?.handleHostRejectedSession() }
+                Task { @MainActor in self?.handleHostRejectedSession(refusal) }
             },
             applySwipeNavStatus: { [weak self] status in
                 // SWIPE-NAV STATUS: surface the host's eligibility + recogniser knobs to the
@@ -673,8 +680,19 @@ package final class VideoWindowPipeline {
     private func evaluateStall() async {
         guard let session else { return }
         let snapshot = await session.livenessSnapshot()
+        let now = ProcessInfo.processInfo.systemUptime
+        // THE HELLO DEADLINE: never connected, never heard a control datagram, and past the deadline
+        // since activation ⇒ nothing is listening at the dialled address. The stall policy cannot say
+        // this — a stall is a connected stream going quiet — and the hello-retry loop never gives up,
+        // which is right for a restarting host and a pane dialling nothing for ever otherwise.
+        if !snapshot.streaming, snapshot.lastControlSignalAt == nil,
+           let activatedAt, now - activatedAt >= KeepaliveTiming.helloDeadline
+        {
+            handleHostRejectedSession(.hostUnreachable)
+            return
+        }
         let verdict = Self.stallPolicy.evaluate(.init(
-            now: ProcessInfo.processInfo.systemUptime,
+            now: now,
             lastFrameAt: snapshot.lastVideoSignalAt,
             lastHeartbeatAt: snapshot.lastControlSignalAt,
             connected: snapshot.streaming,
@@ -718,10 +736,18 @@ package final class VideoWindowPipeline {
     /// up. The FSM is already `.rejected` (hello retry stopped); `deactivate` closes the lane and
     /// sockets. Then surface the refusal to the pane (→ model leaves its live surface and falls
     /// back to the picker with an error).
-    private func handleHostRejectedSession() {
-        log.info("host REJECTED the session (helloAck accepted=false) — tearing down, NO auto-rebuild")
+    private func handleHostRejectedSession(_ refusal: VideoSessionRefusal) {
+        switch refusal {
+        case .rejectedByHost:
+            log.info("host REJECTED the session (helloAck accepted=false) — tearing down, NO auto-rebuild")
+        case .hostUnreachable:
+            log
+                .info(
+                    "no control datagram within \(KeepaliveTiming.helloDeadline)s — no video host answered; tearing down, NO auto-rebuild",
+                )
+        }
         deactivate()
-        onSessionRejected?()
+        onSessionRejected?(refusal)
     }
 
     /// Tears the pipeline + display link + sockets down (called on disappear/dismantle).
@@ -757,6 +783,7 @@ package final class VideoWindowPipeline {
         reprojector?.reset()
         reprojector = nil
         activeConnection = nil
+        activatedAt = nil
     }
 
     /// Called each layout pass with the on-screen layer size (points). Updates the

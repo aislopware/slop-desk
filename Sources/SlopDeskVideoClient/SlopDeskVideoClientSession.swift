@@ -226,7 +226,7 @@ public actor SlopDeskVideoClientSession {
         /// mismatch). TERMINAL, non-retrying: unlike ``notifySessionEnded`` the pipeline must NOT
         /// rebuild + re-hello (that re-sends the same doomed request forever) — it tears down and
         /// surfaces the failure to the pane (picker/error). `nil` ⇒ no owner (standalone/preview).
-        public var notifySessionRejected: (@Sendable () -> Void)?
+        public var notifySessionRejected: (@Sendable (VideoSessionRefusal) -> Void)?
         /// SWIPE-NAV STATUS (cursor socket type=3, ~2 Hz + on frontmost change): whether the host's
         /// ⌘[/⌘] swipe translation would currently accept a gesture, plus its recogniser knobs —
         /// the macOS view gates + configures its peel-feedback mirror from this (doc 05 §8). The
@@ -252,7 +252,7 @@ public actor SlopDeskVideoClientSession {
             notifyDecodedPoints: (@Sendable (VideoSize) -> Void)? = nil,
             notifyDisplayMax: (@Sendable (VideoSize) -> Void)? = nil,
             notifySessionEnded: (@Sendable () -> Void)? = nil,
-            notifySessionRejected: (@Sendable () -> Void)? = nil,
+            notifySessionRejected: (@Sendable (VideoSessionRefusal) -> Void)? = nil,
             applySwipeNavStatus: (@Sendable (SwipeNavStatusMessage) -> Void)? = nil,
         ) {
             self.submitDecodedFrame = submitDecodedFrame
@@ -2173,7 +2173,7 @@ public actor SlopDeskVideoClientSession {
             // re-hello the same doomed request forever). The FSM is `.rejected`, so the hello-retry
             // loop and the media gates have already quiesced.
             dbg("session REJECTED by host (helloAck accepted=false) → notifying pipeline, no rebuild")
-            gui.notifySessionRejected?()
+            gui.notifySessionRejected?(.rejectedByHost)
         }
     }
 

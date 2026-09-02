@@ -1270,6 +1270,13 @@ videohostd:
 videohostd-test:
     cd rust/slopdesk-videohostd && cargo test
 
+# Build + (re)install the com.slopdesk.videohostd LaunchAgent — the GUI video host as its own launchd
+# job, which is what keys its Screen Recording and Accessibility grants to the binary that captures
+# rather than to whatever terminal started it (docs/61, docs/49). Restarting it ends one live GUI
+# session, which the client rebuilds on its own.
+videohostd-install:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- install videohostd
+
 # The AudioToolbox row. The ONE crate in the `slopdesk-apple-*` family exempt from §2's raw-pointer
 # ban, because Core Audio hands out SAMPLE MEMORY rather than objects — `AudioBufferList` is a C
 # flexible-array member and `AudioConverterFillComplexBuffer` fills it through a callback. The

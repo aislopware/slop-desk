@@ -1,10 +1,11 @@
 //! Is the sidecar that is RUNNING the sidecar that is INSTALLED?
 //!
 //! Every daemon in this repository outlives the process that asks about it. superd is a launchd
-//! agent held across logins; screend is one too (`just screend-install`); dropd, inspectord
-//! and androidd are superd's children, which is why hostd re-learns their ports off superd's
-//! retained ring rather than by starting them. So `brew upgrade` replaces twelve binaries on disk
-//! and changes what is executing for none of them.
+//! agent held across logins; screend and videohostd are too (`just screend-install`,
+//! `just videohostd-install`); dropd, inspectord and androidd are superd's children, which is why
+//! hostd re-learns their ports off superd's retained ring rather than by starting them. So
+//! `brew upgrade` replaces thirteen binaries on disk and changes what is executing for none of
+//! them.
 //!
 //! That is not a bug to fix by restarting everything. Ending superd takes every live pane with it,
 //! and a user who upgraded to get a fixed drop dialog did not ask to lose their sessions. The
@@ -112,23 +113,23 @@ impl RestartPolicy {
 ///
 /// `None` for everything else, and that `None` is load-bearing: a line that tells a user to
 /// `launchctl kickstart` a job that does not exist is worse than no line, because they will run it
-/// and believe it worked. Only superd (`just superd-install`) and screend
-/// (`just screend-install`) are agents; the other three daemons are superd's children and
-/// launchd has never heard of them.
+/// and believe it worked. Only superd (`just superd-install`), screend (`just screend-install`)
+/// and videohostd (`just videohostd-install`) are agents; the other three daemons are superd's
+/// children and launchd has never heard of them.
 #[must_use]
 pub fn launch_agent_label(tool: &str) -> Option<&'static str> {
     match tool {
         "slopdesk-superd" => Some("com.slopdesk.superd"),
         "slopdesk-screend" => Some("com.slopdesk.screend"),
+        "slopdesk-videohostd" => Some("com.slopdesk.videohostd"),
         _ => None,
     }
 }
 
 /// What may be done about a stale `tool`, by the name it ships under in `MANIFEST.json`.
 ///
-/// Every one of the twelve shipped binaries is named here, because the manifest lists all twelve
-/// and a
-/// table that answered only for the five daemons would report the other five by the fallback —
+/// Every one of the thirteen shipped binaries is named here, because the manifest lists all
+/// thirteen and a table that answered only for the daemons would report the rest by the fallback —
 /// which says "your call" about a program that is not running and never was.
 ///
 /// Unknown names are [`RestartPolicy::OperatorChoice`] all the same: a tool this table has not been
@@ -138,9 +139,9 @@ pub fn launch_agent_label(tool: &str) -> Option<&'static str> {
 #[must_use]
 #[expect(
     clippy::match_same_arms,
-    reason = "superd and hostd land on the same policy as the fallback and are still named: the arm IS the \
-              review, and folding it into `_` would make the day a seventh daemon arrives indistinguishable \
-              from the day someone decided about these two"
+    reason = "superd, hostd and videohostd land on the same policy as the fallback and are still named: the \
+              arm IS the review, and folding it into `_` would make the day an eighth daemon arrives \
+              indistinguishable from the day someone decided about these three"
 )]
 pub fn policy(tool: &str) -> RestartPolicy {
     match tool {
@@ -149,6 +150,10 @@ pub fn policy(tool: &str) -> RestartPolicy {
         // superd takes every pane; hostd is the process `CLAUDE.md` forbids killing, and its
         // relaunch is the user quitting an app they may be working in.
         "slopdesk-superd" | "slopdesk-hostd" => RestartPolicy::OperatorChoice,
+        // A launch agent hostd holds no handle to, like screend — but one that does NOT retire
+        // itself: a kickstart ends the live GUI session, which the client rebuilds on its own, and
+        // whether that is worth it now is the operator's call. The note names the label.
+        "slopdesk-videohostd" => RestartPolicy::OperatorChoice,
         "slopdesk"
         | "slopdesk-ctl"
         | "slopdesk-probe"
@@ -398,6 +403,8 @@ mod tests {
         assert_eq!(policy("slopdesk-superd"), RestartPolicy::OperatorChoice);
         // screend idles out on its own and the next verb starts the installed one.
         assert_eq!(policy("slopdesk-screend"), RestartPolicy::SelfRetiring);
+        // videohostd is a launch agent too, and it does not retire itself: the user's call.
+        assert_eq!(policy("slopdesk-videohostd"), RestartPolicy::OperatorChoice);
     }
 
     #[test]
@@ -425,14 +432,18 @@ mod tests {
         assert_eq!(policy("slopdesk-hostd"), RestartPolicy::OperatorChoice);
     }
 
-    /// Only two of the twelve are launch agents, and the note that tells a user to kickstart one is
-    /// built from THIS lookup rather than from the tool's name.
+    /// Only three of the thirteen are launch agents, and the note that tells a user to kickstart
+    /// one is built from THIS lookup rather than from the tool's name.
     #[test]
-    fn only_the_two_launch_agents_have_a_label() {
+    fn only_the_three_launch_agents_have_a_label() {
         assert_eq!(launch_agent_label("slopdesk-superd"), Some("com.slopdesk.superd"));
         assert_eq!(
             launch_agent_label("slopdesk-screend"),
             Some("com.slopdesk.screend")
+        );
+        assert_eq!(
+            launch_agent_label("slopdesk-videohostd"),
+            Some("com.slopdesk.videohostd")
         );
         assert_eq!(
             launch_agent_label("slopdesk-dropd"),

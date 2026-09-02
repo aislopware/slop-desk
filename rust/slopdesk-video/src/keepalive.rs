@@ -35,6 +35,17 @@ pub const REAPER_TICK_SECONDS: f64 = 5.0;
 /// declaring a stall, at the cost of roughly one 21-byte datagram per second per session.
 pub const HOST_HEARTBEAT_INTERVAL_SECONDS: f64 = 1.0;
 
+/// How long (seconds) a client waits for the FIRST control datagram before it stops calling the
+/// session "connecting" and reports that nothing is listening.
+///
+/// The hello is retried on a backoff while the state machine stays `.connecting`, and that retry
+/// is right for a host that is restarting — but against a machine with no `slopdesk-videohostd`
+/// at all it is a pane that dials 9000/9001 for ever and shows nothing (`docs/70` §2b). Ten
+/// seconds is several retries at the backoff's cap and longer than any restart the rebuild path
+/// rides out; a host that answers later is one re-open away. The stall threshold does not apply:
+/// a stall is a CONNECTED stream going quiet, and this session never connected.
+pub const HELLO_DEADLINE_SECONDS: f64 = 10.0;
+
 /// The timestamped liveness inputs. Every time shares one monotonic clock.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StallInputs {

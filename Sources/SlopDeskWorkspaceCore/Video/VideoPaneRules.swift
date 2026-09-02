@@ -185,6 +185,16 @@ public enum RemoteWindowRules {
             }
         }
     }
+
+    /// What the placeholder says when NOTHING answered the hello inside the hello deadline — no
+    /// `slopdesk-videohostd` at the address the pane dialled. Names the address and the daemon.
+    public static func unreachableMessage(host: String, mediaPort: UInt16) -> String {
+        ffiLend(host) { text in
+            ffiAnswerText(capacity: 256) { out, cap in
+                slopdesk_ws_stream_unreachable(text.baseAddress, text.count, mediaPort, out, cap)
+            }
+        }
+    }
 }
 
 // MARK: - HostWindowFeedRules (the host-windows rail's fold)

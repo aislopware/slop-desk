@@ -89,22 +89,38 @@ final class RemoteWindowModelTests: XCTestCase {
         let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
         m.open()
         XCTAssertNotNil(m.active)
-        m.noteSessionRejected()
+        m.noteSessionRejected(.rejectedByHost)
         XCTAssertNil(m.active, "a host refusal must leave .active — the pane falls back to the placeholder")
         XCTAssertNotNil(m.loadError, "loadError explains WHY (the target is gone on the host)")
+    }
+
+    // NOTHING answered inside the hello deadline — no videohostd at the dialled address. Same
+    // fall-back, a different sentence: this one names the address and the daemon to start, because
+    // "no longer available on the host" would send the user looking for a window that was never
+    // the problem.
+    func testNoteHostUnreachableNamesTheAddressItDialled() throws {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.open()
+        XCTAssertNotNil(m.active)
+        m.noteSessionRejected(.hostUnreachable)
+        XCTAssertNil(m.active)
+        let sentence = try XCTUnwrap(m.loadError)
+        XCTAssertTrue(sentence.contains("\(target.host):\(target.mediaPort)"), sentence)
+        XCTAssertTrue(sentence.contains("slopdesk-videohostd"), sentence)
+        XCTAssertNotEqual(sentence, RemoteWindowRules.rejectionMessage(title: "Safari"))
     }
 
     func testNoteSessionRejectedIsInertWhenNothingIsActive() {
         // A late/duplicate refusal after the user already closed the pane must not stamp a stale
         // error onto a fresh picker (or crash).
         let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
-        m.noteSessionRejected()
+        m.noteSessionRejected(.rejectedByHost)
         XCTAssertNil(m.active)
         XCTAssertNil(m.loadError, "no refusal error without a live session to refuse")
 
         m.open()
         m.close()
-        m.noteSessionRejected()
+        m.noteSessionRejected(.hostUnreachable)
         XCTAssertNil(m.active)
         XCTAssertNil(m.loadError, "a refusal landing after close() is a no-op")
     }

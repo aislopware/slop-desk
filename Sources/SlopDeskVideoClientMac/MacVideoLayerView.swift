@@ -14,6 +14,7 @@
 import AppKit
 import Foundation
 import SlopDeskVideoClient
+import SlopDeskVideoProtocol
 
 /// Env-gated (`SLOPDESK_VIDEO_DEBUG`) stderr diagnostics for the remote-GUI VIEW layer (scroll routing +
 /// isActive delivery) — the BUG-2 ground-truth probe: logging both distinguishes a stale/sticky
@@ -68,7 +69,7 @@ struct MacVideoLayerView {
     var onPrivacyInjectorReady: ((((Bool) -> Void)?) -> Void)?
     var onSystemKeyInjectorReady: ((((UInt16, UInt64, Bool) -> Void)?) -> Void)?
     var onStreamStallChanged: ((Bool) -> Void)?
-    var onSessionRejected: (() -> Void)?
+    var onSessionRejected: ((VideoSessionRefusal) -> Void)?
 
     /// Builds and mounts a fresh `MacMetalLayerBackedView` — the AppKit spelling of a `makeNSView` body.
     /// See the file header for why it stays a named, standalone call rather than being inlined into

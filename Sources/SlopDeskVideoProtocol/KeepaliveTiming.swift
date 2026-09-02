@@ -50,4 +50,9 @@ public enum KeepaliveTiming {
     /// 1 s ⇒ the client's 3 s ``StreamStallPolicy/threshold`` tolerates two consecutive losses before
     /// declaring a stall, at a cost of one ~21-byte datagram per second per session.
     public static var hostHeartbeatInterval: TimeInterval { timing.host_heartbeat_interval }
+
+    /// How long a session that has never heard from the host keeps dialling before the pane says
+    /// nothing is listening (``VideoSessionRefusal/hostUnreachable``). Not the stall threshold:
+    /// a stall is a CONNECTED stream going quiet, and this session never connected.
+    public static var helloDeadline: TimeInterval { timing.hello_deadline }
 }

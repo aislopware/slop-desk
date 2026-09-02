@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskVideoProtocol
 import SlopDeskWorkspaceModel
 
 // Per-pane `@MainActor @Observable` LOGIC for one PATH-2 video stream (a whole display for a
@@ -686,9 +687,17 @@ public final class RemoteWindowModel {
     /// doomed request forever), so the pane must not keep a dead black surface: drop ``active`` (the pane
     /// falls back to its placeholder) and record ``loadError``. No-op when nothing is active (a late/
     /// duplicate refusal after a user close must not stamp an error onto a fresh pane).
-    public func noteSessionRejected() {
+    public func noteSessionRejected(_ refusal: VideoSessionRefusal) {
         guard active != nil else { return }
-        let sentence = RemoteWindowRules.rejectionMessage(title: title)
+        let sentence: String
+        switch refusal {
+        case .rejectedByHost:
+            sentence = RemoteWindowRules.rejectionMessage(title: title)
+        case .hostUnreachable:
+            // The address the pane dialled, so the sentence names the machine and port to fix.
+            let t = target()
+            sentence = RemoteWindowRules.unreachableMessage(host: t.host, mediaPort: t.mediaPort)
+        }
         close()
         loadError = sentence
     }

@@ -24,8 +24,9 @@
 //!
 //! ## Two strings, and neither can be empty
 //!
-//! [`slopdesk_ws_stream_title`] and [`slopdesk_ws_stream_rejection`] deliver raw bytes with no
-//! framing, because each answers ONE string. Neither has an empty arm — a titleless window is
+//! [`slopdesk_ws_stream_title`], [`slopdesk_ws_stream_rejection`] and
+//! [`slopdesk_ws_stream_unreachable`] deliver raw bytes with no framing, because each answers ONE
+//! string. Neither has an empty arm — a titleless window is
 //! called `window 7` and a nameless target is called `The stream target` — so §4's `0` never
 //! collides with a real answer at either.
 
@@ -384,6 +385,32 @@ pub unsafe extern "C" fn slopdesk_ws_stream_rejection(
     unsafe { deliver(answer.as_bytes(), out, cap) }
 }
 
+/// What the placeholder says when NOTHING answered the hello within the hello deadline
+/// (`slopdesk_keepalive_timing().hello_deadline`): the address dialled, and the daemon to start.
+///
+/// # Safety
+/// `host` must point at `len` readable bytes (or be null with `len == 0`), and `out` at `cap`
+/// writable bytes. Both borrows end when this returns.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and both pointers are the caller's"
+)]
+pub unsafe extern "C" fn slopdesk_ws_stream_unreachable(
+    host: *const c_uchar,
+    len: usize,
+    media_port: u16,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above; the borrow dies with this call.
+    let lent = unsafe { borrow(host, len) };
+    let named = String::from_utf8_lossy(lent);
+    let answer = remote_window::unreachable_message(&named, media_port);
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(answer.as_bytes(), out, cap) }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the door is the only way to test the door")]
@@ -394,7 +421,7 @@ mod tests {
         SlopDeskWsStreamSample, slopdesk_ws_stream_admits_fps, slopdesk_ws_stream_admits_kbps,
         slopdesk_ws_stream_geometry, slopdesk_ws_stream_immersive, slopdesk_ws_stream_network,
         slopdesk_ws_stream_rejection, slopdesk_ws_stream_seeded_caps, slopdesk_ws_stream_title,
-        slopdesk_ws_stream_window_id,
+        slopdesk_ws_stream_unreachable, slopdesk_ws_stream_window_id,
     };
     use crate::testing::delivered;
 
@@ -583,6 +610,18 @@ mod tests {
                 String::from_utf8_lossy(&refused),
                 remote_window::rejection_message(title),
                 "{title:?}"
+            );
+        }
+        for host in ["", "127.0.0.1", "100.107.14.250"] {
+            let bytes = host.as_bytes();
+            let unanswered = delivered(|out, cap| {
+                // SAFETY: both pointers are live locals for the call.
+                unsafe { slopdesk_ws_stream_unreachable(bytes.as_ptr(), bytes.len(), 9000, out, cap) }
+            });
+            assert_eq!(
+                String::from_utf8_lossy(&unanswered),
+                remote_window::unreachable_message(host, 9000),
+                "{host:?}"
             );
         }
     }

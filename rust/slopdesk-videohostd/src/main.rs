@@ -73,6 +73,17 @@ const BITS_PER_MEGABIT: i64 = 1_000_000;
 const DRAIN_DEADLINE_SECONDS: u64 = 5;
 
 fn main() {
+    // Step 0. `--version`, before anything is read or folded: the one contract every shipped
+    // binary answers (`docs/49` — the version is field two of line one), asked by the packager of
+    // the built binary and by the install-side audit of the installed one.
+    if std::env::args()
+        .nth(1)
+        .is_some_and(|argument| argument == "--version")
+    {
+        print_version();
+        return;
+    }
+
     // Step 1. Before the parse, because `SLOPDESK_VD` is a key this file can carry.
     let overlay = Overlay::from_launch();
     let applied = overlay.applied();
@@ -100,6 +111,12 @@ fn main() {
     }
 
     serve(&parsed, overlay);
+}
+
+/// The `--version` banner, on stdout: `slopdesk-videohostd <version>`.
+#[expect(clippy::print_stdout, reason = "a --version banner is stdout by convention")]
+fn print_version() {
+    println!("{}", slopdesk_videohostd::args::version_banner());
 }
 
 /// The daemon proper: steps 4 through 9.
@@ -170,7 +187,12 @@ fn serve(parsed: &Parsed, overlay: Overlay) {
                 "failed to start: cannot bind media:{} cursor:{}: {why}",
                 args.media_port, args.cursor_port
             ));
-            std::process::exit(1);
+            // `EADDRINUSE` is another videohostd already serving these ports — a checkout's beside
+            // the installed agent's, or a relaunch racing the process it replaced — and that is
+            // exit 0, for hostd's reason (`ops/launchd.rs`): under the agent's
+            // `SuccessfulExit: false` an exit 1 would respawn the loser every ten seconds for ever.
+            let held = why.kind() == std::io::ErrorKind::AddrInUse;
+            std::process::exit(i32::from(!held));
         },
     };
     let sinks = Arc::new(MuxSinkTable::new());

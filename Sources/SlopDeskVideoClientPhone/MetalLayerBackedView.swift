@@ -185,7 +185,7 @@ final class MetalLayerBackedView: UIView {
     var onStreamBitrateReady: ((Int) -> Void)?
     var onNetworkStatsReady: ((Double, Double, Double, Int, Int, Double, Double, Double) -> Void)?
     var onStreamStallReady: ((Bool) -> Void)?
-    var onSessionRejectedReady: (() -> Void)?
+    var onSessionRejectedReady: ((VideoSessionRefusal) -> Void)?
 
     /// The host window's current POINT size, and the host-reported MAX resizable size. `nil` until the
     /// first decoded frame / the host's `displayMax` lands — the geometry push then leaves the far side's
@@ -284,7 +284,7 @@ final class MetalLayerBackedView: UIView {
         pipeline.onStreamStallChanged = { [weak self] stalled in self?.onStreamStallReady?(stalled) }
         // TERMINAL REFUSAL: the pipeline has already torn down with no auto-rebuild; forwarding is what
         // moves the pane off a dead black surface and onto the picker/error state.
-        pipeline.onSessionRejected = { [weak self] in self?.onSessionRejectedReady?() }
+        pipeline.onSessionRejected = { [weak self] refusal in self?.onSessionRejectedReady?(refusal) }
         // SWIPE-PEEL: the host's operating point + history push. Without it the mirror never arms,
         // which is the correct behaviour against a host too old to send one.
         pipeline.onSwipeNavStatusChanged = { [weak self] status in self?.adoptSwipeNavStatus(status) }

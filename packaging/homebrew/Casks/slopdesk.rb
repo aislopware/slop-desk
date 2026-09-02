@@ -38,8 +38,10 @@ cask "slopdesk" do
     `brew services start slopdesk`; without it the host launches and cannot open a pane.
 
     Nothing installed here needs Screen Recording or Accessibility. Terminal panes need no TCC
-    grant at all, and the two the GUI video path needs belong to `slopdesk-videohostd`, which no
-    release ships yet -- build it from a checkout with `just videohostd`.
+    grant at all, and the two the GUI video path needs belong to `slopdesk-videohostd` from the
+    formula, on the host: run it from a desktop Terminal there, or install its launch agent from
+    a checkout with `just videohostd-install`. A remote-window pane with nothing listening says so
+    after ten seconds instead of waiting.
 
     The command-line tools live in the formula. SlopDesk.app links `slopdesk` at launch from a
     copy beside its own executable and the shipped bundle carries none, so that link is a no-op

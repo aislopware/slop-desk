@@ -17,6 +17,10 @@
 # pipeline moved from shell to `slopdesk-release`: the digest is now over repo-RELATIVE paths, so it
 # is a property of the tree rather than of where the tree was checked out. No version moved, because
 # no source did. Every tool reads "same" against this seed; they diverge from here.
+#
+# slopdesk-videohostd was SEEDED the same way on 2026-09-02, the day it joined the tarball — the
+# line below is `slopdesk-release stamps`' own output for that tree, so it reads "same" until its
+# source moves and `bump-tools` moves it from 0.1.0 on the first release that changes it.
 slopdesk-ctl 0.1.0 cc8d08e182787ef99b24872d871c2138987a0f27bcb7e230e6831ed6076e531e
 slopdesk-probe 0.1.0 a85274289ef68df266120c4c0e72acd947976493a8c5b121a7169fe3b07a7cbe
 slopdesk-hook 0.1.0 b241214ed703c07bb5c9710e9f47ee9946c0173a9adf7436dcc8556c576133d3
@@ -27,3 +31,4 @@ slopdesk-dropd 0.1.0 22a5aa0fef7ba3afe8add848243a69eb9419da287b04ab4c2070138e60e
 slopdesk-inspectord 0.1.0 87f357528c95d026e7b7273634631161f8cdf061892753056f216a11f70aa94a
 slopdesk-androidd 0.1.0 c1eb08687d487b5e0a959e108d500dec282cc7790554b9fb411aba4908e75523
 slopdesk-codeseed 0.1.0 6367e5fec6f67234741f9ce0ed302a82c973a57d3a9ac82f245f18208649a04b
+slopdesk-videohostd 0.1.0 d5c4ede6e3a1435ad27ed862ed8ad6605b1645d6fd3e0575c4dc23f2a3c74bb3

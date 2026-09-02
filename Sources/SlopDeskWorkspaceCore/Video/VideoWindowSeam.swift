@@ -6,6 +6,7 @@
 // view framework: the seam's whole point is that it names no view type, and a geometry struct is the
 // most this file may depend on.
 import CoreGraphics
+import SlopDeskVideoProtocol
 
 /// The **seam** between the client's canvas and a remote GUI-window video view (PATH 2 / Phase 4,
 /// doc 17 §3).
@@ -198,9 +199,11 @@ public struct RemotePaneContext {
     /// (`helloAck(accepted: false)` — the window is gone on the host / version mismatch, incl. the mux
     /// mint-failure refusal). The pipeline has already torn down WITHOUT the bye path's auto-rebuild
     /// (re-helloing the same doomed request forever); the pane model should leave its live surface and
-    /// fall back to the picker with an error (``RemoteWindowModel/noteSessionRejected()``).
+    /// fall back to the picker with an error (``RemoteWindowModel/noteSessionRejected(_:)``). The
+    /// ``VideoSessionRefusal`` says which of the two it was — the host said no, or nothing answered
+    /// inside the hello deadline — because the pane's sentence differs.
     /// Informational view→model push (never reaches the host), so NOT read-only-gated. `nil` ⇒ none.
-    public var onSessionRejected: (() -> Void)?
+    public var onSessionRejected: ((VideoSessionRefusal) -> Void)?
 
     public init(
         isActive: Bool = true,
@@ -227,7 +230,7 @@ public struct RemotePaneContext {
             _ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool,
         ) -> Void)?) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
-        onSessionRejected: (() -> Void)? = nil,
+        onSessionRejected: ((VideoSessionRefusal) -> Void)? = nil,
     ) {
         self.isActive = isActive
         self.inputEnabled = inputEnabled
@@ -291,7 +294,7 @@ public struct RemotePaneContext {
             _ rttMs: Double, _ encodeMs: Double, _ decodeMs: Double,
         ) -> Void = { _, _, _, _, _, _, _, _ in },
         onStreamStall: @escaping (_ stalled: Bool) -> Void = { _ in },
-        onSessionRejected: @escaping () -> Void = {},
+        onSessionRejected: @escaping (VideoSessionRefusal) -> Void = { _ in },
     ) -> Self {
         Self(
             isActive: isActive,

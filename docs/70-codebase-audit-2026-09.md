@@ -163,18 +163,35 @@ present tense; the secondary one is hand-spelled counts that grew without their 
   relaunch SlopDeskHost.app"; it names the launch-agent restart now, and `docs/49` quotes the new
   line. `adopt.rs`'s module doc described the menu-bar host in the present tense.
 
-## 2b. Found and NOT fixed — an open release gap
+## 2b. The GUI video host now ships — and the pane that dialled it no longer hangs
 
-**The GUI video host does not ship.** `rust/slopdesk-videohostd` is the daemon (`docs/61`), and
-nothing in `rust/slopdesk-devtools/src/release/tools.rs`, `packaging/` or the release workflow
-builds, packs or installs it; nothing in `slopdesk-hostd` or `slopdesk-hostserver` spawns it
-either. It is started from a checkout by `slopdesk-ops` / the GUI gates through
-`devtools::hostbin` and nowhere else, so a `brew install` has no GUI video path at all, and the
-TCC grants the cask's caveats used to attribute to `SlopDeskHost.app` belong to a binary the cask
-does not install. Left open on purpose: shipping it is a launch story (who starts it, under which
-label, how its Screen Recording and Accessibility grants are keyed) plus the sidecars manifest's
-"twelve binaries" contract, not a line in a tool list — a decision for `docs/49`, recorded here so
-it is not rediscovered.
+**Found:** `rust/slopdesk-videohostd` is the daemon (`docs/61`), and nothing in
+`rust/slopdesk-devtools/src/release/tools.rs`, `packaging/` or the release workflow built, packed
+or installed it; nothing in `slopdesk-hostd` spawned it. It was started from a checkout by
+`slopdesk-ops` and the GUI gates and nowhere else. Meanwhile the shipped client's remote-window
+pane (`RemoteWindowModel.open()`) dialled `ConnectionTarget`'s media/cursor ports (9000/9001)
+unconditionally and retried its hello for ever: on every `brew install` the pane mounted its live
+chrome and waited, silently, for a daemon that did not exist on the machine.
+
+**Fixed, as a launch story rather than a line in a list:**
+
+- **Thirteenth binary.** `RUST_CRATE_TOOLS` names it, the formula installs and `test`s it, the
+  pin carries its seeded stamp (`slopdesk-release stamps`' own output for the tree), and it
+  answers `--version` in the shape every shipped tool does (`docs/49`).
+- **A LaunchAgent of its own, never a superd child.** TCC grants Screen Recording and
+  Accessibility to the RESPONSIBLE process, and a child of a launchd job inherits its parent's —
+  so the `spawn_or_adopt` route dropd rides would have had users granting Screen Recording to
+  `slopdesk-superd`. Disclaiming responsibility at spawn is an SPI `slopdesk-posix` does not carry
+  (a `docs/57` design change, recorded in §3). `com.slopdesk.videohostd` is the fourth `Agent` in
+  `ops/launchd.rs` (`just videohostd-install`), with superd's guarded `KeepAlive` — and for that
+  to converge, `EADDRINUSE` on 9000/9001 is now a deliberate exit 0 in the daemon's `main`, for
+  hostd's reason. `slopdesk-sidecars` knows its label and calls its restart the operator's.
+- **The pane says so.** `KeepaliveTiming.helloDeadline` (10 s, `slopdesk_video::keepalive`) is the
+  sixth number in the timing record; the pipeline's stall monitor reports
+  `VideoSessionRefusal.hostUnreachable` when no control datagram has arrived by then, the same
+  teardown as a host refusal with a different sentence
+  (`slopdesk_workspace::remote_window::unreachable_message`, naming the address dialled and the
+  daemon to start). `onSessionRejected` carries the reason end to end.
 
 
 ## 3. Rejected, with the evidence

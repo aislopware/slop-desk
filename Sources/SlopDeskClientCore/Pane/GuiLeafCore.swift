@@ -349,7 +349,7 @@ package final class GuiLeafCore {
                 )
             },
             onStreamStall: { [weak model] stalled in model?.noteStreamStalled(stalled) },
-            onSessionRejected: { [weak model] in model?.noteSessionRejected() },
+            onSessionRejected: { [weak model] refusal in model?.noteSessionRejected(refusal) },
         )
     }
 

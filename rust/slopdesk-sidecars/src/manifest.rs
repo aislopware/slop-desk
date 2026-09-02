@@ -24,9 +24,9 @@ use crate::{RestartPolicy, launch_agent_label, policy};
 
 /// What to tell a user about a changed tool only they may restart.
 ///
-/// The launchd label is looked UP, never derived from the tool's name. Only two of the twelve are
-/// launch agents, and a line telling someone to kickstart a job launchd has never heard of is worse
-/// than no line: they will run it, see no error, and believe it worked.
+/// The launchd label is looked UP, never derived from the tool's name. Only three of the thirteen
+/// are launch agents, and a line telling someone to kickstart a job launchd has never heard of is
+/// worse than no line: they will run it, see no error, and believe it worked.
 fn operator_note(tool: &str) -> String {
     if let Some(label) = launch_agent_label(tool) {
         return format!(

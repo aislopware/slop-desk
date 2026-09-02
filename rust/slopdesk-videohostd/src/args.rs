@@ -204,6 +204,15 @@ fn parse_point_size(raw: &str) -> Option<(u32, u32)> {
     Some((width, height))
 }
 
+/// The `--version` banner: the binary's name, a space, the crate's version.
+///
+/// The shape every shipped tool answers, and the one `slopdesk-release package`, the formula's
+/// `test do` and hostd's install-side audit all read as "field two of line one" (`docs/49`).
+#[must_use]
+pub fn version_banner() -> String {
+    format!("slopdesk-videohostd {}", env!("CARGO_PKG_VERSION"))
+}
+
 /// The usage text, with the program name the process was invoked under.
 #[derive(Debug, Clone, Copy)]
 pub struct Usage<'a>(pub &'a str);
@@ -213,25 +222,26 @@ impl fmt::Display for Usage<'_> {
         let program = self.0;
         write!(
             f,
-            "usage: {program} [--list] [--window-id N | --window-title SUBSTR] [--media-port N] \
-             [--cursor-port N]\n\n\x20 --list             enumerate shareable windows (id, app, title, \
-             size) and exit\n\x20 --window-id N      serve the window with CGWindowID N\n\x20 \
-             --window-title S   serve the first on-screen window whose title contains S\n\x20 --media-port \
-             N     UDP media/control/geometry/input port (default 9000)\n\x20 --cursor-port N    UDP \
-             dedicated cursor port (default 9001)\n\x20 --scale N          capture at window-points × N \
-             PIXELS (default 1 = light; 2 = Retina/sharper)\n\x20 --bitrate N        live-encoder target \
-             bitrate in Mbps (default 12; higher = crisper text,\n\x20                    but the \
-             low-latency rate-control caps keyframe growth — for truly sharp\n\x20                    text \
-             raise --scale instead, or use an all-intra mode)\n\x20 --fps N            encoder frame-rate \
-             cap (default 30 — a coding tool, not a game stream;\n\x20                    pass 60 for \
-             smoother motion)\n\x20 --virtual-display  create a HiDPI 2× virtual display and move each \
-             remoted window onto it so it\n\x20                    renders at REAL Retina backing \
-             (razor-sharp text) — the only way to get 2×\n\x20                    on a 1× host. DEFAULT \
-             OFF. Also via SLOPDESK_VD=1.\n\x20 --no-virtual-display  (default) capture the real display \
-             directly — no synthetic display, no\n\x20                    window parking; 1× capture on a \
-             1× host. Also via SLOPDESK_VD=0.\n\x20 --vd-point-size WxH  virtual-display logical size in \
-             points (default 1920x1080 → 3840x2160 px)\n\nNeeds Screen-Recording (capture) + Accessibility \
-             & Post-Event (input) TCC, and a\nreal GUI login session. Run from the desktop, not over SSH."
+            "usage: {program} [--version] [--list] [--window-id N | --window-title SUBSTR] [--media-port N] \
+             [--cursor-port N]\n\n\x20 --version          print `slopdesk-videohostd <version>` and \
+             exit\n\x20 --list             enumerate shareable windows (id, app, title, size) and \
+             exit\n\x20 --window-id N      serve the window with CGWindowID N\n\x20 --window-title S   \
+             serve the first on-screen window whose title contains S\n\x20 --media-port N     UDP \
+             media/control/geometry/input port (default 9000)\n\x20 --cursor-port N    UDP dedicated cursor \
+             port (default 9001)\n\x20 --scale N          capture at window-points × N PIXELS (default 1 = \
+             light; 2 = Retina/sharper)\n\x20 --bitrate N        live-encoder target bitrate in Mbps \
+             (default 12; higher = crisper text,\n\x20                    but the low-latency rate-control \
+             caps keyframe growth — for truly sharp\n\x20                    text raise --scale instead, or \
+             use an all-intra mode)\n\x20 --fps N            encoder frame-rate cap (default 30 — a coding \
+             tool, not a game stream;\n\x20                    pass 60 for smoother motion)\n\x20 \
+             --virtual-display  create a HiDPI 2× virtual display and move each remoted window onto it so \
+             it\n\x20                    renders at REAL Retina backing (razor-sharp text) — the only way \
+             to get 2×\n\x20                    on a 1× host. DEFAULT OFF. Also via SLOPDESK_VD=1.\n\x20 \
+             --no-virtual-display  (default) capture the real display directly — no synthetic display, \
+             no\n\x20                    window parking; 1× capture on a 1× host. Also via \
+             SLOPDESK_VD=0.\n\x20 --vd-point-size WxH  virtual-display logical size in points (default \
+             1920x1080 → 3840x2160 px)\n\nNeeds Screen-Recording (capture) + Accessibility & Post-Event \
+             (input) TCC, and a\nreal GUI login session. Run from the desktop, not over SSH."
         )
     }
 }
@@ -295,6 +305,20 @@ mod tests {
     #[test]
     fn an_unknown_argument_is_a_usage_error_rather_than_an_ignored_token() {
         assert!(parse(&["--sharpen"]).is_none());
+    }
+
+    /// Field two of line one is the version, and field one is the name the manifest lists —
+    /// the contract every shipped binary's banner keeps (`docs/49`).
+    #[test]
+    fn the_version_banner_is_name_then_version_and_nothing_else() {
+        let banner = version_banner();
+        let fields: Vec<&str> = banner.split_whitespace().collect();
+        assert_eq!(
+            fields,
+            ["slopdesk-videohostd", env!("CARGO_PKG_VERSION")],
+            "{banner:?}"
+        );
+        assert!(!banner.contains('\n'));
     }
 
     #[test]

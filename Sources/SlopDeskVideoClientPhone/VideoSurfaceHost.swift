@@ -187,7 +187,7 @@ public struct VideoPaneSpec {
     /// TERMINAL REFUSAL: fired once after the host REJECTED the session (`helloAck(accepted: false)`
     /// — window gone / version mismatch). The pipeline has already torn down with no auto-rebuild;
     /// this is what moves the pane off a dead surface and onto the picker/error state.
-    public let onSessionRejected: (() -> Void)?
+    public let onSessionRejected: ((VideoSessionRefusal) -> Void)?
 
     public init(
         title: String,
@@ -214,7 +214,7 @@ public struct VideoPaneSpec {
         onAudioInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)? = nil,
         onPrivacyInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
-        onSessionRejected: (() -> Void)? = nil,
+        onSessionRejected: ((VideoSessionRefusal) -> Void)? = nil,
     ) {
         self.title = title
         self.targetAppName = targetAppName

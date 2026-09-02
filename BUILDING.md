@@ -71,11 +71,17 @@ running `claude`, detected automatically.
 Restart the host with `just host-restart`, which replays hostd's recorded launch. Never `pkill` it.
 The restart is the config reload; there is no live one.
 
-GUI-window path. Needs Screen Recording and Accessibility permission, and a real GUI session:
+GUI-window path. Needs Screen Recording and Accessibility permission, and a real GUI session.
+`slopdesk-videohostd` ships in the formula and is a LaunchAgent of its own in a checkout
+(`just videohostd-install`), because TCC grants go to the responsible process: a daemon started
+from a Terminal is granted AS that Terminal, and a launchd job is granted as itself. The client's
+remote-window pane dials it on UDP 9000/9001 and reports "no video host answered" after ten
+seconds if nothing is listening. By hand, from a desktop Terminal:
 
 ```sh
-.build/release/slopdesk-videohostd --list
-.build/release/slopdesk-videohostd --window-id <N>
+rust/slopdesk-videohostd/target/release/slopdesk-videohostd --list
+rust/slopdesk-videohostd/target/release/slopdesk-videohostd            # serves every window the client picks
+rust/slopdesk-videohostd/target/release/slopdesk-videohostd --window-id <N>
 ```
 
 Window panes default to 30 fps, desktop panes to 60. `--fps N` overrides.

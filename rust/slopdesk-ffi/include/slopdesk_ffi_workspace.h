@@ -578,6 +578,11 @@ size_t slopdesk_ws_stream_title(const uint8_t *title, size_t len, uint32_t windo
 // generically when there is not, so it reads as a sentence either way. Neither door here has an
 // empty arm, so §4's 0 never collides with a real answer at either.
 size_t slopdesk_ws_stream_rejection(const uint8_t *title, size_t len, uint8_t *out, size_t cap);
+// What the placeholder says when NOTHING answered the hello inside
+// slopdesk_keepalive_timing().hello_deadline — no slopdesk-videohostd on the host, or one on other
+// ports. Names the address dialled (an empty host reads as 127.0.0.1) and the daemon to start.
+size_t slopdesk_ws_stream_unreachable(const uint8_t *host, size_t len, uint16_t media_port,
+                                      uint8_t *out, size_t cap);
 
 // ---- The host-windows rail's fold ---------------------------------------------------------------
 //

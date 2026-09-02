@@ -537,14 +537,16 @@ SlopDeskVideoSize slopdesk_cursor_rendered_shape_size(SlopDeskVideoSize logical,
 
 
 /* The keepalive timing contract, and the stall threshold it is sized against. ONE record, because
- * the five numbers are one argument: the stall threshold tolerates two lost host heartbeats, and
- * the reaper tick is what makes the worst-case reclaim `idle_timeout + reaper_tick`. */
+ * the six numbers are one argument: the stall threshold tolerates two lost host heartbeats, the
+ * reaper tick is what makes the worst-case reclaim `idle_timeout + reaper_tick`, and the hello
+ * deadline is how long a session that never connected keeps dialling before the client says so. */
 typedef struct {
   double keepalive_interval;
   double idle_timeout;
   double reaper_tick;
   double host_heartbeat_interval;
   double stall_threshold;
+  double hello_deadline;
 } SlopDeskKeepaliveTiming;
 
 SlopDeskKeepaliveTiming slopdesk_keepalive_timing(void);

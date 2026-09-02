@@ -68,7 +68,7 @@ enum Floor {
 }
 
 /// Every file the census names, and why it stays. Kept sorted by path.
-const FLOOR: [(&str, Floor); 69] = [
+const FLOOR: [(&str, Floor); 70] = [
     ("Sources/SlopDeskArena/ArenaText.swift", Floor::CallingConvention),
     (
         "Sources/SlopDeskArena/FFIDelivery.swift",
@@ -229,6 +229,10 @@ const FLOOR: [(&str, Floor); 69] = [
     ),
     (
         "Sources/SlopDeskVideoProtocol/SlopDeskVideoProtocol.swift",
+        Floor::Vocabulary,
+    ),
+    (
+        "Sources/SlopDeskVideoProtocol/VideoSessionRefusal.swift",
         Floor::Vocabulary,
     ),
     (

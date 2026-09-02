@@ -25,8 +25,8 @@ use slopdesk_video::geometry::{
     VideoContentMode, VideoPoint, VideoRect, VideoSize, displayed_video_rect, view_point,
 };
 use slopdesk_video::keepalive::{
-    HOST_HEARTBEAT_INTERVAL_SECONDS, IDLE_TIMEOUT_SECONDS, KEEPALIVE_INTERVAL_SECONDS, REAPER_TICK_SECONDS,
-    StreamStallPolicy,
+    HELLO_DEADLINE_SECONDS, HOST_HEARTBEAT_INTERVAL_SECONDS, IDLE_TIMEOUT_SECONDS,
+    KEEPALIVE_INTERVAL_SECONDS, REAPER_TICK_SECONDS, StreamStallPolicy,
 };
 use slopdesk_video::playout::{
     DEFAULT_BASE_SECONDS, DEFAULT_CEIL_SECONDS, DEFAULT_FLOOR_SECONDS, DEFAULT_K,
@@ -204,6 +204,9 @@ pub struct SlopDeskKeepaliveTiming {
     pub host_heartbeat_interval: f64,
     /// How long without a liveness signal the client calls the stream frozen.
     pub stall_threshold: f64,
+    /// How long a never-connected session waits for its first control datagram before the client
+    /// reports that no video host answered.
+    pub hello_deadline: f64,
 }
 
 /// The keepalive timing contract.
@@ -219,6 +222,7 @@ pub const extern "C" fn slopdesk_keepalive_timing() -> SlopDeskKeepaliveTiming {
         reaper_tick: REAPER_TICK_SECONDS,
         host_heartbeat_interval: HOST_HEARTBEAT_INTERVAL_SECONDS,
         stall_threshold: StreamStallPolicy::DEFAULT_THRESHOLD_SECONDS,
+        hello_deadline: HELLO_DEADLINE_SECONDS,
     }
 }
 

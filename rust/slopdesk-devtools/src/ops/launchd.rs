@@ -1,4 +1,4 @@
-//! The three `LaunchAgent`s, as ONE installer and three descriptions.
+//! The four `LaunchAgent`s, as ONE installer and four descriptions.
 //!
 //! `install-superd.sh` and `install-screend.sh` were 294 lines that differed in six things: the
 //! label, the binary, the log file, one `EnvironmentVariables` block, one `KeepAlive` shape and
@@ -7,8 +7,8 @@
 //! poll — was duplicated verbatim, and the duplication was load-bearing in the worst way: a fix
 //! to one was a fix to neither until somebody remembered the other file existed.
 //!
-//! Here they are [`SUPERD`], [`SCREEND`] and [`HOSTD`], three [`Agent`] values, and the installer
-//! is one function that reads them.
+//! Here they are [`SUPERD`], [`SCREEND`], [`HOSTD`] and [`VIDEOHOSTD`], four [`Agent`] values, and
+//! the installer is one function that reads them.
 //!
 //! ## Why hostd is one of them now
 //! It was not, and the reason it was not is gone: a menu-bar app spawned the daemon, so a first
@@ -137,16 +137,45 @@ pub const HOSTD: Agent = Agent {
     socket: "tcp/7420 (slopdesk_hostlaunch::args::DEFAULT_PORT)",
 };
 
+/// videohostd: the GUI video host (`docs/61`), the daemon behind the client's remote-window pane.
+///
+/// A `LaunchAgent` and NOT a hostd child, for TCC's sake. Screen Recording and Accessibility are
+/// granted to the RESPONSIBLE process, and a child of a launchd job inherits its parent's — so a
+/// videohostd forked under superd the way dropd is would have the user granting Screen Recording
+/// to `slopdesk-superd`, and revoking it there. A job of its own is its own responsible process,
+/// and the prompt names the binary that captures. (Disclaiming responsibility at spawn is an SPI
+/// `slopdesk-posix` does not carry — `docs/57` — and `docs/70` §3 records the trade.)
+///
+/// superd's `KeepAlive` shape, for hostd's reason: `EADDRINUSE` — a checkout's videohostd already
+/// on 9000/9001, or a relaunch racing the process it replaced — is a deliberate exit 0 in
+/// `slopdesk-videohostd`'s `main`, and a bare `true` would respawn the loser for ever.
+///
+/// `Free`: it holds no PTY and no durable state. A reinstall costs one live GUI session, and the
+/// client rebuilds that on its own (`VideoWindowPipeline.rebuildAfterHostEndedSession`).
+pub const VIDEOHOSTD: Agent = Agent {
+    label: "com.slopdesk.videohostd",
+    crate_name: "slopdesk-videohostd",
+    cost: RestartCost::Free,
+    environment: &[],
+    keep_alive: "    <dict>\n        <key>SuccessfulExit</key>\n        <false/>\n    </dict>",
+    socket: "udp/9000 media + udp/9001 cursor (slopdesk_videohostd::args defaults)",
+};
+
 /// The agent a verb names, or the list of the ones that exist.
 ///
 /// # Errors
-/// When the name is not one of the three.
+/// When the name is not one of the four.
 pub fn by_name(name: &str) -> Result<&'static Agent, String> {
     match name {
         "superd" => Ok(&SUPERD),
         "screend" => Ok(&SCREEND),
         "hostd" => Ok(&HOSTD),
-        other => Err(format!("unknown agent: {other} (superd | screend | hostd)")),
+        "videohostd" => Ok(&VIDEOHOSTD),
+        other => {
+            Err(format!(
+                "unknown agent: {other} (superd | screend | hostd | videohostd)"
+            ))
+        },
     }
 }
 
@@ -482,10 +511,30 @@ mod tests {
     /// Every agent the installer can be asked for is one it can name back.
     #[test]
     fn every_installable_agent_resolves_by_name() {
-        for name in ["superd", "screend", "hostd"] {
+        for name in ["superd", "screend", "hostd", "videohostd"] {
             assert!(super::by_name(name).is_ok(), "{name}");
         }
-        assert!(super::by_name("videohostd").is_err());
+        assert!(
+            super::by_name("androidd").is_err(),
+            "superd's child, not an agent"
+        );
+    }
+
+    /// videohostd exits 0 when its ports are held, so it takes the guarded shape too — and it
+    /// carries no environment: its operating point is `video-prefs.json`'s, folded by the daemon.
+    #[test]
+    fn videohostd_never_restarts_a_deliberate_exit_either() {
+        let text = super::plist(
+            &super::VIDEOHOSTD,
+            Path::new("/bin/videohostd"),
+            Path::new("/tmp/videohostd.log"),
+        );
+        assert!(text.contains("<key>SuccessfulExit</key>"), "the guarded shape");
+        assert!(
+            !text.contains("<key>KeepAlive</key>\n    <true/>"),
+            "never the bare one"
+        );
+        assert!(!text.contains("<key>EnvironmentVariables</key>"));
     }
 
     /// screend's is the bare `true`, and it carries the idle-exit override superd has no use for.

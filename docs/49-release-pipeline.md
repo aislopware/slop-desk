@@ -222,7 +222,7 @@ pipeline exists (see "Deliberately not done").
 
 ## Every sidecar carries its own version
 
-The six sites above are one number for one product. The twelve binaries in the tarball are not one
+The six sites above are one number for one product. The thirteen binaries in the tarball are not one
 product — each is its own process with its own lifetime, and the expensive ones outlive the release
 that installed them. superd holds the master fd of every live pane (`docs/51`), so restarting it
 costs the user every running agent. Under one shared number that price was paid on **every**
@@ -264,7 +264,7 @@ Two gates keep the number honest, and they are deliberately in different places:
 * `every-sidecar-is-pinned` (`rust/slopdesk-invariants`) — every shipped cargo tool has a pin entry, and every pin entry names a
   shipped tool. Runs in `just check`.
 * `slopdesk-release package` — asks every **built** binary `--version` and refuses to package on a
-  disagreement with the pin. The same question the CLI gate has always asked, now asked of all twelve,
+  disagreement with the pin. The same question the CLI gate has always asked, now asked of all thirteen,
   and asked of the binary rather than the source, so a stale artifact staged by `locate_tool` is
   caught here instead of on a user's machine.
 
@@ -280,10 +280,11 @@ concludes a patch release requires a client update.
 
 ## The running daemon, and the one on disk
 
-An upgrade does not reach a running daemon. superd and screend are LaunchAgents held across logins;
-dropd, inspectord and androidd are superd's children that a restarted hostd **adopts** rather than
-starts. `brew upgrade` therefore writes twelve new binaries and changes what is executing for none of
-them — a host silently running last week's code behind this week's version number.
+An upgrade does not reach a running daemon. superd, screend and videohostd are LaunchAgents held
+across logins; dropd, inspectord and androidd are superd's children that a restarted hostd
+**adopts** rather than starts. `brew upgrade` therefore writes thirteen new binaries and changes
+what is executing for none of them — a host silently running last week's code behind this week's
+version number.
 
 The fix is not "restart everything", which is the price the shared version number already charged.
 It is: ask each daemon what it is **running**, compare that with what is **installed**, and act only
@@ -320,7 +321,7 @@ are up, and logs one line each.
 |---|---|---|
 | `automatic` | dropd, inspectord, androidd | hostd's own children. It ends the stale one and re-opens on the **same** port and drop directory, so a client that reconnects finds it unmoved. androidd is only ended — its port is the OS's, and the next `ensure` round boots the installed binary |
 | `selfRetiring` | screend | it exits after `SLOPDESK_SCREEND_IDLE_EXIT` (2 minutes) of quiet and `ScreenClient` starts the installed one on the next verb. The window closes with nobody acting, and hostd holds no handle to a LaunchAgent anyway |
-| `operatorChoice` | superd, hostd, and anything this table has not been taught about | ending superd ends every live pane; hostd is the process `CLAUDE.md` forbids killing, and its relaunch is a user quitting an app they may be working in. Information, never an action — and an unknown restart cost is an unknown, so the safe default is "ask" |
+| `operatorChoice` | superd, hostd, videohostd, and anything this table has not been taught about | ending superd ends every live pane; hostd is the process `CLAUDE.md` forbids killing, and its relaunch is a user quitting an app they may be working in; videohostd is a LaunchAgent hostd holds no handle to and one that does not retire itself — a kickstart ends the live GUI session, which the client rebuilds, and whether now is the moment is the user's. Information, never an action — and an unknown restart cost is an unknown, so the safe default is "ask" |
 | `notResident` | slopdesk, slopdesk-ctl, slopdesk-probe, slopdesk-hook, slopdesk-agenthooks, slopdesk-codeseed | forked per event and gone: `slopdesk` once per invocation, the hook twice per tool call. Replacing the file **is** the upgrade, completed. Kept apart from `automatic` because "restarted" and "was never running" read identically in a log line and mean opposite things the day one of them stops being true |
 
 A missing number on either side is `unknown`, never `current`. Reporting a stale sidecar as up to
@@ -339,8 +340,8 @@ running the old daemon with green tests and a working panel.
 
 The audit above asks live daemons. That is the right question at hostd's start and the wrong one at
 install time, and the reason is timing: `brew upgrade` runs while every daemon is still serving the
-**old** binaries, so a live audit at that moment reports all twelve as stale whether one tool
-changed or twelve. It cannot tell an upgrade apart from a reinstall.
+**old** binaries, so a live audit at that moment reports all thirteen as stale whether one tool
+changed or thirteen. It cannot tell an upgrade apart from a reinstall.
 
 What an install *can* answer is about files: the `MANIFEST.json` that just landed, against the one
 recorded after the previous install. Their difference is exactly the set this upgrade touched, and
@@ -493,12 +494,14 @@ catch.
 
 ## What the tarball ships, and why the list is not shorter
 
-Twelve binaries, not three — the five root-workspace tools and the seven with a workspace of
+Thirteen binaries, not three — the five root-workspace tools and the eight with a workspace of
 their own, which is the table below and the two arrays in `rust/slopdesk-devtools/src/release/tools.rs`. The three it used to be — `slopdesk`, `slopdesk-hostd`, `slopdesk-ctl` —
 produced a host that could not open a pane, because `slopdesk-superd` forks and owns every PTY
 master and hostd has no fallback path (`docs/51`; `HostServiceSupervisor.connected()` says it in
-one line). The other five daemons each cost a feature outright: no screen engine, no file drop, no
-inspector, no Android panel, no profile seed.
+one line). The other six daemons each cost a feature outright: no screen engine, no file drop, no
+inspector, no Android panel, no profile seed — and, until 2026-09-02, no GUI video: the client's
+remote-window pane dialled `slopdesk-videohostd`'s ports on every `brew install` and nothing was
+there to answer (`docs/70` §2b).
 
 There is no longer a Swift half; the split that remains is along the **workspace** boundary, and so
 is the build:
@@ -506,9 +509,17 @@ is the build:
 | Group | Binaries | Built from | Lands in |
 | --- | --- | --- | --- |
 | root workspace members | `slopdesk` (from `slopdesk-cli`), `slopdesk-ctl`, `slopdesk-probe`, `slopdesk-hook`, `slopdesk-agenthooks` | `rust/`, with `-p` | `rust/target/…` |
-| own workspaces | `slopdesk-hostd`, `slopdesk-superd`, `-screend`, `-dropd`, `-inspectord`, `-androidd`, `-codeseed` | the crate's own directory | that crate's own `target/` |
+| own workspaces | `slopdesk-hostd`, `slopdesk-superd`, `-screend`, `-dropd`, `-inspectord`, `-androidd`, `-codeseed`, `-videohostd` | the crate's own directory | that crate's own `target/` |
 
-`slopdesk-hostd` heads the second group and is not a daemon like the six under it: it is the app's
+`slopdesk-videohostd` is the one daemon the formula installs and nothing on the host starts: TCC
+grants Screen Recording and Accessibility to the RESPONSIBLE process, a child of a launchd job is
+its parent's, and so a videohostd spawned under superd the way dropd is would have the user
+granting Screen Recording to superd. It is a LaunchAgent of its own instead (`just
+videohostd-install`, `com.slopdesk.videohostd`, `rust/slopdesk-devtools/src/ops/launchd.rs`) — or
+a process the user starts from a desktop Terminal, which is then the grantee. A formula carries
+one `service`, and superd is it, so the formula's caveats say this rather than start it.
+
+`slopdesk-hostd` heads the second group and is not a daemon like the seven under it: it is the app's
 own process, and it is there because its crate carries its own workspace. The two **product** tools
 now sit one in each group — `slopdesk` shares `rust/target/`, the host does not — so staging the
 host out of the shared directory finds nothing, which `pack.rs` pins.
