@@ -44,6 +44,12 @@
 //! `nm --print-armap` read, the two-direction symbol bijection, the header nesting, and the stamp
 //! written LAST.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the build steps and the drift lists are this gate's report"
+)]
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -866,6 +872,7 @@ fn door_names(text: &str) -> BTreeSet<String> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "a panic in a test is the failure report")]
     use std::collections::BTreeSet;
     use std::fs;
 

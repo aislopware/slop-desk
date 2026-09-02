@@ -35,6 +35,12 @@
 //! onto a running binary is `ETXTBSY`, and a partial write would leave launchd re-execing a
 //! truncated file.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the install prompt and the closing status are this verb's report"
+)]
+
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
@@ -53,7 +59,7 @@ pub enum RestartCost {
 }
 
 /// One `LaunchAgent`, in the six ways the two differ.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Agent {
     /// The launchd label, which is also the plist's basename.
     pub label: &'static str,
@@ -322,7 +328,7 @@ pub fn bootout(agent: &Agent, budget: Duration) -> Result<bool, String> {
     }
     // `ask`, not `run`: a job that exits between the probe above and this call boots itself out,
     // and launchd's non-zero for "no such process" is that race, not a failure.
-    let _ = proc::ask("/bin/launchctl", &["bootout", &job], Path::new("/"));
+    let _ignored = proc::ask("/bin/launchctl", &["bootout", &job], Path::new("/"));
 
     let deadline = Instant::now() + budget;
     while Instant::now() < deadline {
@@ -346,7 +352,7 @@ pub fn uninstall(agent: &Agent, force: bool) -> Result<(), String> {
     let domain = domain()?;
     let plist_file = plist_path(agent);
     // `ask`, not `run`: booting out a job that is not loaded is the ordinary case here.
-    let _ = proc::ask(
+    let _ignored = proc::ask(
         "/bin/launchctl",
         &["bootout", &format!("{domain}/{}", agent.label)],
         Path::new("/"),
@@ -402,13 +408,13 @@ pub fn install(root: &Path, agent: &Agent, force: bool) -> Result<(), String> {
 
     let domain = domain()?;
     let job = format!("{domain}/{}", agent.label);
-    let _ = proc::ask("/bin/launchctl", &["bootout", &job], Path::new("/"));
+    let _ignored = proc::ask("/bin/launchctl", &["bootout", &job], Path::new("/"));
     proc::run(
         "/bin/launchctl",
         &["bootstrap", &domain, &plist_file.to_string_lossy()],
         Path::new("/"),
     )?;
-    let _ = proc::ask("/bin/launchctl", &["kickstart", &job], Path::new("/"));
+    let _ignored = proc::ask("/bin/launchctl", &["kickstart", &job], Path::new("/"));
 
     // Verified, rather than trusting `bootstrap`'s exit code: a job that exits immediately still
     // bootstraps "successfully".
@@ -422,7 +428,7 @@ pub fn install(root: &Path, agent: &Agent, force: bool) -> Result<(), String> {
             println!("  socket: {}", agent.socket);
             return Ok(());
         }
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(Duration::from_millis(200));
     }
     let tail = fs::read_to_string(&log).unwrap_or_default();
     let last: Vec<&str> = tail.lines().rev().take(20).collect();
@@ -438,6 +444,7 @@ pub fn install(root: &Path, agent: &Agent, force: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     use std::path::Path;
 
     /// superd's `KeepAlive` is the dict, not the bare `true` that once respawned a deliberate exit.

@@ -51,7 +51,7 @@ None are immutable (user-directed 2026-08-07). The name "SlopDesk", the slopcat 
 
 ## Evidence on Hand
 
-- Measured performance: G2G p50 27 ms (4 runs, 320 flash pairs, scripts/measure-g2g.sh); decode 1.1 ms; risk-resolution measurements in docs/18.
+- Measured performance: G2G p50 27 ms (4 runs, 320 flash pairs, the since-deleted `measure-g2g` harness — the numbers are recorded in docs/18); decode 1.1 ms; risk-resolution measurements in docs/18.
 - ~5,200 passing tests, golden wire vectors, differential NEON≡scalar pins.
 - Full architecture/decision record in docs/ (00-overview, DECISIONS.md, numbered design docs).
 - No external users, testimonials, benchmarks against competitors, or adoption numbers exist — future marketing/OSS surfaces must not fabricate any.

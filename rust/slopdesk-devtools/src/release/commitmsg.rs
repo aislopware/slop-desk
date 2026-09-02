@@ -206,6 +206,7 @@ mod tests {
         matches!(check(message), Verdict::Accepted(_))
     }
 
+    #[expect(clippy::panic, reason = "a panic in a test is the failure report")]
     fn rejection(message: &str) -> String {
         match check(message) {
             Verdict::Rejected(why) => why,

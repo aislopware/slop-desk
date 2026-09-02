@@ -412,8 +412,8 @@ impl PtyProcess {
         let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
         let master = held.master.as_ref().ok_or(Errno::EBADF)?;
         let mut written = 0;
-        while written < bytes.len() {
-            match nix::unistd::write(master, &bytes[written..]) {
+        while let Some(rest) = bytes.get(written..).filter(|rest| !rest.is_empty()) {
+            match nix::unistd::write(master, rest) {
                 Ok(0) => return Err(Errno::EIO),
                 Ok(count) => written += count,
                 Err(Errno::EINTR) => (),

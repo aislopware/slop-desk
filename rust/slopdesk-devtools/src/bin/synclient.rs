@@ -12,6 +12,12 @@
 //! injection trace back out of the log. The gestures themselves are in
 //! `slopdesk_devtools::synclient`.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the gesture narration is this binary's whole output"
+)]
+
 use std::process::ExitCode;
 use std::thread::sleep;
 use std::time::Duration;

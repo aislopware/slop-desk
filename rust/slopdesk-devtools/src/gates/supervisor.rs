@@ -54,6 +54,7 @@ const SIDECAR_RECIPES: [&str; 5] = ["superd", "screend", "dropd", "androidd", "i
 /// # Errors
 /// The first suite that fails, named — a later suite proves nothing about a contract an earlier one
 /// already showed broken.
+#[expect(clippy::print_stdout, reason = "the OK line is this gate's report")]
 pub fn run(root: &Path) -> Result<(), String> {
     for sidecar in SIDECARS {
         proc::step(&format!("cargo test ({sidecar})"));

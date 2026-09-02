@@ -50,6 +50,7 @@ pub mod host_probes;
 pub mod hot_paths;
 pub mod ink_floor;
 pub mod latency_ratchets;
+pub mod lint_floor;
 pub mod macui_memos;
 pub mod overlay_split;
 pub mod package_graph;
@@ -208,7 +209,7 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "video-mux-and-input",
-            origin: "docs/55 §4",
+            origin: "docs/55",
             check: video_wire::mux_and_input,
         },
         Rule {
@@ -333,7 +334,7 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "video-host-mux",
-            origin: "docs/55 §4",
+            origin: "docs/55",
             check: video_host::host_mux,
         },
         Rule {
@@ -1228,7 +1229,7 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "length-prefix-parsed-once",
-            origin: "docs/55 §4",
+            origin: "docs/55",
             check: held_values::a_length_prefix_is_parsed_once,
         },
         Rule {
@@ -1513,7 +1514,7 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "quantiser-knob-clamps",
-            origin: "docs/55 §4",
+            origin: "docs/55",
             check: video_ports::a_quantiser_knob_clamps_rather_than_rejects,
         },
         Rule {
@@ -1523,7 +1524,7 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "env-knob-reject-rule",
-            origin: "docs/55 §4",
+            origin: "docs/55",
             check: video_ports::the_reject_reading_of_an_env_knob_is_rusts,
         },
         Rule {
@@ -1538,7 +1539,7 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "index-doors-guess",
-            origin: "docs/55 §4",
+            origin: "docs/55",
             check: latency_ratchets::the_index_doors_guess_they_do_not_probe,
         },
         Rule {
@@ -1872,6 +1873,16 @@ pub fn registry() -> Vec<Rule> {
             check: package_graph::every_linked_artifact_is_built_by_the_release,
         },
         Rule {
+            name: "ffi-dependents-link-the-frameworks",
+            origin: "docs/55 §4b",
+            check: package_graph::every_ffi_dependent_links_the_frameworks,
+        },
+        Rule {
+            name: "lint-floor-agrees",
+            origin: "docs/46, docs/55 §5",
+            check: lint_floor::lint_floor_agrees,
+        },
+        Rule {
             name: "docc-links-resolve",
             origin: "CLAUDE.md §Rules, docs/55",
             check: doc_citations::every_docc_link_resolves,
@@ -1931,6 +1942,8 @@ pub fn registry() -> Vec<Rule> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
+
     /// A registry with two rules of the same name would make `--only` ambiguous and a differential
     /// diff unattributable.
     #[test]

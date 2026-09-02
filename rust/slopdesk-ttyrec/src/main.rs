@@ -41,6 +41,14 @@
 //! `slopdesk-vterm`'s `conformance::dynamic`, which resizes the session under test mid-stream and
 //! needs no cooperation from a child process to do it.
 
+// A hand-run recorder: the one summary line and `--help` are stdout, and every refusal is a sentence
+// on stderr for the operator who typed the command.
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "stdout is the recording's summary; stderr is the operator's refusal"
+)]
+
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsRawFd as _, OwnedFd};
 use std::sync::mpsc;
@@ -195,6 +203,11 @@ fn parse_from(arguments: impl Iterator<Item = String>) -> Result<Options, String
                 command.extend(arguments.by_ref());
                 break;
             },
+            #[expect(
+                clippy::exit,
+                reason = "`--help` is answered before there are options to return, and its status is 0 \
+                          where every `Err` this parser answers becomes 2"
+            )]
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -521,6 +534,11 @@ fn drain(
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic,
+        reason = "a panic in a test is the failure report, not a fault"
+    )]
+
     use super::{Action, Options, child_environment, parse_from};
 
     fn words(line: &str) -> impl Iterator<Item = String> {

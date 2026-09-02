@@ -217,7 +217,6 @@ final class WorkspaceCoreHandle {
         // The producer is `store_core`'s own `String`, so these bytes cannot be invalid UTF-8. A
         // failable init would add a `nil` branch meaning "may not be written", which is a different
         // answer from the empty key that already means exactly that.
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: bytes, as: UTF8.self)
     }
 

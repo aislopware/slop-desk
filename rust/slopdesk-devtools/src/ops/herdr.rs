@@ -297,6 +297,7 @@ fn build_oracle(herdr_dir: &Path) -> Result<(), String> {
 }
 
 /// Print a block indented, the way the shell's `sed 's/^/    /'` did.
+#[expect(clippy::print_stdout, reason = "the indented block is the sync's report")]
 fn indent(text: &str) {
     for line in text.lines() {
         println!("    {line}");

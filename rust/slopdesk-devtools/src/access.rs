@@ -75,6 +75,7 @@ const STATEMENT_KEYWORDS: [&str; 9] = [
 /// declaration the tool has already annotated — a second run must see `package final class X {` as
 /// a type, or the members inside it stop being annotated. Whether a declaration is already
 /// annotated is answered by looking at the captured prefix, not by failing to parse it.
+#[expect(clippy::expect_used, reason = "the pattern is a literal in this file")]
 fn declaration() -> &'static Regex {
     static HELD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(&format!(
@@ -86,6 +87,7 @@ fn declaration() -> &'static Regex {
 }
 
 /// Whether a captured prefix already carries an access modifier.
+#[expect(clippy::expect_used, reason = "the pattern is a literal in this file")]
 fn access_in_prefix() -> &'static Regex {
     static HELD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(&format!(r"(?:^|\s){ACCESS}\s")).expect("the access pattern is a literal in this file")
@@ -94,6 +96,7 @@ fn access_in_prefix() -> &'static Regex {
 }
 
 /// An `extension` prefix that already hands its access down to every member.
+#[expect(clippy::expect_used, reason = "the pattern is a literal in this file")]
 fn hoisting_prefix() -> &'static Regex {
     static HELD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?:^|\s)(?:open|public|package)\s").expect("the hoist pattern is a literal in this file")
@@ -287,6 +290,7 @@ pub fn transform(text: &str) -> (String, usize) {
 }
 
 /// A raised `rawValue` and the type it holds.
+#[expect(clippy::expect_used, reason = "the pattern is a literal in this file")]
 fn rawvalue() -> &'static Regex {
     static HELD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
@@ -298,6 +302,7 @@ fn rawvalue() -> &'static Regex {
 }
 
 /// A raised struct head that conforms to one of the two protocols with a synthesised initializer.
+#[expect(clippy::expect_used, reason = "the pattern is a literal in this file")]
 fn optionset_head() -> &'static Regex {
     static HELD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(

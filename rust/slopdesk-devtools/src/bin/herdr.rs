@@ -10,6 +10,12 @@
 //! upstream. `differential` exits 0 on full parity over the corpus and 1 on any mismatch it cannot
 //! attribute to a deliberately diverged rule.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the parity report is this binary's whole output"
+)]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 

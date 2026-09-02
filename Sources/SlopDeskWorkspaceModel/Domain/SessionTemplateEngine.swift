@@ -192,7 +192,6 @@ private struct ExpansionReader {
         // The repairing initialiser, matching `ArenaText`: these bytes came back from a Rust
         // `String`, so a failable init has no reachable arm and answering `""` would lose the whole
         // field rather than one character of it.
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: bytes[cursor..<cursor + count], as: UTF8.self)
     }
 

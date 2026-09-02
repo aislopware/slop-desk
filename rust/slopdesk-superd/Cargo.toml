@@ -99,11 +99,6 @@ strip = "debuginfo"
 # forces. Kept as a literal copy rather than inherited, because inheriting would mean being a
 # member, which is the thing the profile forbids.
 [lints.rust]
-# NO LONGER A DEVIATION (stage 28). superd used to sit at `deny` for one reason: the window between
-# `fork(2)` and `execve(2)`, plus four smaller syscalls with no safe wrapper. `deny` is liftable by
-# a single `#[allow]` anywhere in eleven thousand lines, so the exception was crate-wide in effect
-# even though it was one module in intent. Those five sites are `slopdesk-posix` now, and what is
-# left here cannot contain unsafe code at all — `forbid` is not a promise, it is a proof.
 unsafe_code = "forbid"
 
 missing_docs = "deny"
@@ -143,6 +138,7 @@ unimplemented = "deny"
 unreachable = "deny"
 dbg_macro = "deny"
 print_stdout = "deny"
+print_stderr = "deny"
 mem_forget = "deny"
 rest_pat_in_fully_bound_structs = "deny"
 verbose_file_reads = "deny"
@@ -152,20 +148,24 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
+# NO LONGER A DEVIATION (stage 28). superd used to sit at `deny` for one reason: the window between
+# `fork(2)` and `execve(2)`, plus four smaller syscalls with no safe wrapper. `deny` is liftable by
+# a single `#[allow]` anywhere in eleven thousand lines, so the exception was crate-wide in effect
+# even though it was one module in intent. Those five sites are `slopdesk-posix` now, and what is
+# left here cannot contain unsafe code at all — `forbid` is not a promise, it is a proof.
 # DEVIATION 1: `print_stderr`. stderr IS superd's log — launchd captures it to `StandardErrorPath`
 # and that file is the only record of why a pane died. Routing it through a logging crate would add
 # a dependency to say the same words. The deviation is FOUR files, not the crate, so each carries
 # its own `#![expect]` — `server`, `listeners`, `registry`, `journal` — and this stays denied so a
 # fifth has to be a decision.
-print_stderr = "deny"
 # - `multiple_crate_versions` (cargo): unlike the hook, superd has real dependencies, and a
 #   duplicate deep in nix's or serde's tree is not ours to resolve.
-multiple_crate_versions = "allow"
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
 #   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
 #   FMA rounds once where the wire rounds twice, so taking the advice changes the `f64` bit patterns
 #   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
 #   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
 #   here would be obeyed before anyone reads this file.
+multiple_crate_versions = "allow"
 suboptimal_flops = "allow"
 imprecise_flops = "allow"

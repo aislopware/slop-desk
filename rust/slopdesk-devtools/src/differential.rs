@@ -454,13 +454,13 @@ pub fn run(options: &Options, progress: &(dyn Fn(String) + Sync)) -> Result<Repo
     }
 
     let scratch = std::env::temp_dir().join(format!("slopdesk-herdr-diff-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&scratch);
+    let _ignored = fs::remove_dir_all(&scratch);
     for leaf in ["iso/config", "iso/state"] {
         fs::create_dir_all(scratch.join(leaf))
             .map_err(|error| format!("cannot make {}: {error}", scratch.display()))?;
     }
     let outcome = walk(options, &scratch, progress);
-    let _ = fs::remove_dir_all(&scratch);
+    let _ignored = fs::remove_dir_all(&scratch);
     outcome
 }
 
@@ -622,6 +622,7 @@ fn run_case(options: &Options, env: &[(&str, String)], case_path: &Path, label: 
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     use serde_json::{Value, json};
 
     use super::{diff, harvest_fragments, project, screens_for_agent};

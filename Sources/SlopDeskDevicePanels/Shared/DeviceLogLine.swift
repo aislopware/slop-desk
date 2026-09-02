@@ -145,7 +145,6 @@ package struct DeviceLogLine: Identifiable, Equatable {
         // Lossy on purpose, and the rule's failable alternative is wrong here: a device writes
         // whatever it likes into its own log, and a row of it that is not valid UTF-8 must still
         // RENDER — with replacement characters where the bad bytes were — rather than vanish.
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: bytes[start..<end], as: UTF8.self)
     }
 }

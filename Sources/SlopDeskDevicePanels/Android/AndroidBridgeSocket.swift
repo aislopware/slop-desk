@@ -112,7 +112,6 @@ package enum AndroidBridgeReply: Equatable {
                 slopdesk_android_bridge_reply_failure(bytes, length, out, cap)
             }
         }
-        // swiftlint:disable:next optional_data_string_conversion
         return failure.isEmpty ? .ok(line) : .failed(String(decoding: failure, as: UTF8.self))
     }
 }
@@ -183,7 +182,6 @@ package final class AndroidBridgeSocket {
             let end = onEnd
             onEnd = nil
             onReply = nil
-            // swiftlint:disable:next optional_data_string_conversion
             let reason = String(decoding: payload, as: UTF8.self)
             end?(reason.isEmpty ? nil : reason)
         }

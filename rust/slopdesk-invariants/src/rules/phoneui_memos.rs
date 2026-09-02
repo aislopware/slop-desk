@@ -670,6 +670,10 @@ fn brace_delta(line: &str) -> (i32, bool) {
 /// The crate has no brace helper, and the two rules that need one need the same one: a Swift METHOD
 /// or CLOSURE body, which `awk`-style line ranges cannot express because the closing line of a body
 /// is not a pattern — it is whatever line the depth returns to zero on.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "`start` is a line the caller enumerated, and `ceiling` is clamped to the line count"
+)]
 fn brace_block<'a, 'b>(lines: &'b [&'a str], start: usize) -> &'b [&'a str] {
     let ceiling = lines.len().min(start.saturating_add(BLOCK_CEILING));
     let (mut depth, mut opened) = (0_i32, false);
@@ -747,6 +751,8 @@ fn named(offenders: &BTreeSet<String>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
+
     use crate::tests::Fixture;
 
     /// A shell wide enough to clear the §4 floor AND both counted floors, holding one file of each

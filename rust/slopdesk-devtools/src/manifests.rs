@@ -162,6 +162,7 @@ fn difference(mine: &[String], yours: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -175,7 +176,7 @@ mod tests {
     impl Trees {
         fn new(name: &str) -> Self {
             let root = std::env::temp_dir().join(format!("slopdesk-manifests-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&root);
+            let _ignored = fs::remove_dir_all(&root);
             fs::create_dir_all(root.join("herdr/src/detect/manifests")).expect("fixture dirs");
             fs::create_dir_all(root.join("repo").join(OUTPUT_DIR)).expect("fixture dirs");
             let trees = Self { root };
@@ -224,7 +225,7 @@ mod tests {
 
     impl Drop for Trees {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.root);
+            let _ignored = fs::remove_dir_all(&self.root);
         }
     }
 

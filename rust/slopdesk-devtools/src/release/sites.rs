@@ -24,6 +24,12 @@
 //! prevent — a site sitting a release behind — and the next reader would either "fix" it or, worse,
 //! add iOS to the release train and inherit the same silence.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the per-site verdicts are this verb's report"
+)]
+
 use std::fs;
 use std::path::Path;
 

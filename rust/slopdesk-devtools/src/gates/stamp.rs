@@ -372,6 +372,7 @@ pub(crate) fn walk(
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "a panic in a test is the failure report")]
     use std::fs;
 
     use super::{Scope, current, inputs, inputs_for, is_warm, products_named_in, record};

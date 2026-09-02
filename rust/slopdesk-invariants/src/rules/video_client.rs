@@ -715,6 +715,11 @@ pub fn reassembly(tree: &Tree) -> Report {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::indexing_slicing,
+        reason = "a test asserts by panicking, and a fixture it built itself is not a runtime input"
+    )]
+
     use crate::claim::{Claim, View, check_all};
     use crate::tests::Fixture;
 

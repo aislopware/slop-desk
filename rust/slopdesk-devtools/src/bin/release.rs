@@ -22,6 +22,12 @@
 //! Every verb resolves the repo root itself, so it runs from anywhere; `--repo-root <path>` before
 //! the verb overrides that.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the pipeline's narration is this binary's whole output"
+)]
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -67,11 +73,10 @@ fn main() -> ExitCode {
         },
     };
 
-    let Some(command) = arguments.first().cloned() else {
+    let Some((command, rest)) = arguments.split_first() else {
         eprint!("{USAGE}");
         return ExitCode::from(2);
     };
-    let rest = &arguments[1..];
 
     match command.as_str() {
         "commit-msg" => commit_msg(rest),
@@ -128,7 +133,7 @@ fn commit_msg(arguments: &[String]) -> ExitCode {
 
 fn changelog_command(root: &Path, arguments: &[String]) -> ExitCode {
     match arguments.first().map(String::as_str) {
-        Some("render") => finish(changelog::render(root, &arguments[1..])),
+        Some("render") => finish(changelog::render(root, arguments.get(1..).unwrap_or_default())),
         Some("section") => {
             let Some(version) = arguments.get(1) else {
                 eprintln!("usage: slopdesk-release changelog section <version> [changelog]");
@@ -410,7 +415,7 @@ fn cut(root: &Path, arguments: &[String]) -> Result<(), String> {
         proc::step("Dry run — the release body would be");
         println!("{notes}");
         if proc::run("git", &["checkout", "--", changelog::CHANGELOG], root).is_err() {
-            let _ = std::fs::remove_file(root.join(changelog::CHANGELOG));
+            let _ignored = std::fs::remove_file(root.join(changelog::CHANGELOG));
         }
         proc::step("Dry run — the sidecars that would move");
         bump_tools(root, &["--dry-run".to_owned()])?;

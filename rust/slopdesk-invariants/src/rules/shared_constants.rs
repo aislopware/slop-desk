@@ -398,13 +398,14 @@ fn numeric(written: &str) -> Option<f64> {
         rest = rest[operator.len()..].trim_start();
     }
 
+    let (&first, rest) = values.split_first()?;
     let shifts = operators.iter().filter(|operator| **operator == "<<").count();
     if shifts > 0 && shifts != operators.len() {
         return None;
     }
     if shifts > 0 {
-        let mut shifted = values[0];
-        for places in &values[1..] {
+        let mut shifted = first;
+        for places in rest {
             if shifted.fract() != 0.0 || places.fract() != 0.0 || !(0.0..64.0).contains(places) {
                 return None;
             }
@@ -419,14 +420,17 @@ fn numeric(written: &str) -> Option<f64> {
         return Some(shifted);
     }
     // `*` binds tighter than `+` in both languages, so the products are folded first and summed.
-    let mut terms = vec![values[0]];
-    for (operator, value) in operators.iter().zip(&values[1..]) {
+    let mut terms = Vec::new();
+    let mut product = first;
+    for (operator, value) in operators.iter().zip(rest) {
         if *operator == "*" {
-            *terms.last_mut().expect("a term is always pushed first") *= value;
+            product *= value;
         } else {
-            terms.push(*value);
+            terms.push(product);
+            product = *value;
         }
     }
+    terms.push(product);
     Some(terms.iter().sum())
 }
 
@@ -495,6 +499,10 @@ fn rust_sources<'a>(tree: &'a Tree, report: &mut Report) -> Vec<(&'a Path, &'a S
 }
 
 /// Each `mod`/`enum` in `text`, mapped to the constants declared before the next one opens.
+#[expect(
+    clippy::expect_used,
+    reason = "group 0 is the whole match, which every capture set the regex yields carries"
+)]
 fn scopes(text: &str, opener: &str, constant: &str) -> BTreeMap<String, Alphabet> {
     let starts: Vec<(String, usize)> = text::cached(opener)
         .captures_iter(text)
@@ -531,6 +539,10 @@ struct Declaration {
 ///
 /// `attributes` is the run of `#[…]` lines immediately above the declaration, which is where Rust
 /// writes the `#[repr(u8)]` that decides whether an unnumbered variant means a number.
+#[expect(
+    clippy::expect_used,
+    reason = "group 0 is the whole match, which every capture set the regex yields carries"
+)]
 fn declarations(text: &str, opener: &str) -> Vec<Declaration> {
     let found: Vec<_> = text::cached(opener).captures_iter(text).collect();
     let mut out = Vec::new();
@@ -639,6 +651,10 @@ fn local_constants(text: &str) -> Alphabet {
 /// quietly satisfy the other's, which is the reading that would miss a renumbering in exactly one
 /// direction. Two arms belong to the same block while the text between them opens or closes
 /// nothing — a `}` ends the block, and so does an arm naming a different enum.
+#[expect(
+    clippy::expect_used,
+    reason = "group 0 is the whole match, and group 1 of `RUST_IMPL` is not optional"
+)]
 fn ordinal_shims(text: &str) -> BTreeMap<String, Vec<Alphabet>> {
     let impls: Vec<(usize, &str)> = text::cached(RUST_IMPL)
         .captures_iter(text)
@@ -1169,6 +1185,11 @@ pub fn the_opaque_cap_carries_its_inequality(tree: &Tree) -> Report {
 }
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::indexing_slicing,
+        reason = "a test asserts by panicking, and a fixture it built itself is not a runtime input"
+    )]
+
     use super::{Declaration, declarations, discriminants, numeric, ordinal_shims, shown};
     use crate::tests::Fixture;
 

@@ -67,8 +67,6 @@ strip = "debuginfo"
 # The strict block, copied rather than inherited — inheriting would mean being a workspace member,
 # which is what the profile above forbids.
 [lints.rust]
-# The whole of this binary's contact with the kernel goes through `slopdesk-posix` and `nix`, so
-# `forbid` costs nothing and is the form of the promise no downstream `allow` can lift.
 unsafe_code = "forbid"
 
 missing_docs = "deny"
@@ -96,26 +94,17 @@ pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
 
-multiple_crate_versions = "allow"
-
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 panic_in_result_fn = "deny"
+indexing_slicing = "deny"
 integer_division = "deny"
-# `exit` stays DENIED even though this is a process: `main` answers an `ExitCode` and every path
-# returns to it, so the terminal is restored by a `Drop` that actually runs. The Swift's `finish()`
-# called `exit(3)` from inside a closure, which is exactly why it needed a hand-written `Shutdown`
-# type to put the tty back first.
 exit = "deny"
 todo = "deny"
 unimplemented = "deny"
 unreachable = "deny"
 dbg_macro = "deny"
-# Both stay denied, and neither is a hardship: terminal bytes go out with
-# `slopdesk_posix::fdio::write_all` on the raw descriptor (a `println!` would line-buffer a prompt
-# that has no newline into invisibility), and status lines go out with `writeln!` on a locked
-# stderr, which is what `slopdesk-cli`'s `diagnose` already does.
 print_stdout = "deny"
 print_stderr = "deny"
 mem_forget = "deny"
@@ -127,10 +116,21 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
+# The whole of this binary's contact with the kernel goes through `slopdesk-posix` and `nix`, so
+# `forbid` costs nothing and is the form of the promise no downstream `allow` can lift.
+# `exit` stays DENIED even though this is a process: `main` answers an `ExitCode` and every path
+# returns to it, so the terminal is restored by a `Drop` that actually runs. The Swift's `finish()`
+# called `exit(3)` from inside a closure, which is exactly why it needed a hand-written `Shutdown`
+# type to put the tty back first.
+# Both stay denied, and neither is a hardship: terminal bytes go out with
+# `slopdesk_posix::fdio::write_all` on the raw descriptor (a `println!` would line-buffer a prompt
+# that has no newline into invisibility), and status lines go out with `writeln!` on a locked
+# stderr, which is what `slopdesk-cli`'s `diagnose` already does.
 # Disabled, with the same reason every crate in this lane carries: both nursery lints want
 # `f64::mul_add`, the fused multiply-add `CLAUDE.md` forbids. Nothing here does arithmetic on a
 # float at all — the round-trip reading is `slopdesk-clientdriver`'s and this binary does not even
 # render it — but the opt-out is a WORKSPACE-level promise the gate reads per workspace, so a crate
 # that is its own root states it whether or not it has a float today.
+multiple_crate_versions = "allow"
 suboptimal_flops = "allow"
 imprecise_flops = "allow"

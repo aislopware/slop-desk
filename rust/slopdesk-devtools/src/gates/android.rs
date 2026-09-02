@@ -18,6 +18,12 @@
 //! is what makes the proof hold on a host where the provisioned `adb` is not on `PATH` (the normal
 //! case).
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the device census is this gate's report"
+)]
+
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;

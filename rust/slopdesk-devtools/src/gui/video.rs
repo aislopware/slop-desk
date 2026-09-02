@@ -168,7 +168,7 @@ struct VideoHost {
 impl Drop for VideoHost {
     fn drop(&mut self) {
         reap(self.child.id(), "slopdesk-videohostd");
-        let _ = self.child.wait();
+        let _ignored = self.child.wait();
     }
 }
 
@@ -182,7 +182,7 @@ struct ClientProcess {
 impl Drop for ClientProcess {
     fn drop(&mut self) {
         reap(self.child.id(), "SlopDesk");
-        let _ = self.child.wait();
+        let _ignored = self.child.wait();
     }
 }
 
@@ -216,6 +216,7 @@ impl ClientProcess {
     clippy::too_many_lines,
     reason = "one gate is one narrative; splitting it hides which assertion follows which"
 )]
+#[expect(clippy::print_stdout, reason = "the banner is this gate's report")]
 pub fn run(root: &Path, options: &Options) -> Result<(), String> {
     let work = work_dir(root, "video-verify")?;
     let suite = Suite::for_gate("video");
@@ -411,7 +412,7 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
     // capture, encode and both sockets stay perfectly healthy, so not one check above moves.
     // Without this the gate printed ✅ four times and exited 0 on a white window.
     say("video", "waiting for a DECODED frame and a PRESENTED frame…");
-    let _ = poll("a decoded and a presented frame", 40, || {
+    let _ignored = poll("a decoded and a presented frame", 40, || {
         let (decoded, presented) = client_a.frames();
         decoded > 0 && presented > 0
     });
@@ -567,7 +568,7 @@ fn fan_out(
             port::VIDEO
         ),
     );
-    let _ = poll("a second workspace channel", 40, || {
+    let _ignored = poll("a second workspace channel", 40, || {
         hostd.accepted_channels() >= 2
     });
     let channels = hostd.accepted_channels();
@@ -582,7 +583,7 @@ fn fan_out(
     say("video", "two workspace document channels ✅");
 
     say("video", "waiting for the second client to DECODE and PRESENT…");
-    let _ = poll("the second client to render", 60, || {
+    let _ignored = poll("the second client to render", 60, || {
         let (decoded, presented) = client_b.frames();
         decoded > 0 && presented > 0
     });
@@ -680,7 +681,7 @@ fn capture_oslog(work: &Path) {
         }
     }
     if let Ok(mut sink) = fs::File::create(&path) {
-        let _ = sink.write_all(text.as_bytes());
+        let _ignored = sink.write_all(text.as_bytes());
     }
     say(
         "video",
@@ -705,6 +706,7 @@ fn raise_and_shoot(pid: u32, path: &Path, label: &str) {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     const LISTING: &str = "\
 slopdesk-videohostd: shareable windows
   id=11 Finder — (untitled) [1728x1117]

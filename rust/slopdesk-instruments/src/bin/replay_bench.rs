@@ -34,6 +34,13 @@
     clippy::cast_precision_loss,
     reason = "counts far below 2^53 divided into a rate"
 )]
+// The rates ARE this bench's output, and a missing screend is a sentence on stderr rather than a
+// meaningless number — the very thing the Swift instrument got wrong.
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the timings are this bench's output; a missing screend is said on stderr"
+)]
 
 use std::io::{Read as _, Write as _};
 use std::os::unix::net::UnixStream;
@@ -125,7 +132,12 @@ fn make_churn(target: usize) -> Vec<u8> {
                 // A `\r`-overprint progress bar, repainted many times.
                 let repaints = 20 + rng.below(60);
                 for painted in 0..repaints {
+                    #[expect(
+                        clippy::integer_division,
+                        reason = "a whole percent, floored as a progress bar prints it"
+                    )]
                     let percent = std::cmp::min(100, painted * 100 / repaints);
+                    #[expect(clippy::integer_division, reason = "the floor is the bar width being painted")]
                     let bar = "=".repeat(usize::try_from(percent / 4).unwrap_or(0));
                     let counter = rng.below(100_000);
                     out.extend_from_slice(

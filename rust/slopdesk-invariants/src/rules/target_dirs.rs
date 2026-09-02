@@ -270,6 +270,8 @@ fn check_link(report: &mut Report, root: &Path, relative: &str) {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
+
     use std::fs;
 
     use crate::tests::Fixture;
@@ -322,7 +324,7 @@ mod tests {
         fixture.link("linked", "../slopdesk-invariants-walk-linked-outside");
         let report = super::no_generated_tree_sits_in_the_package_walk(&fixture.tree());
         assert!(report.is_clean(), "{report:?}");
-        let _ = fs::remove_dir_all(&outside);
+        let _ignored = fs::remove_dir_all(&outside);
     }
 
     /// An ordinary source tree is nowhere near the ceiling, so the rule is silent on the real tree.
@@ -381,7 +383,8 @@ mod tests {
 
     /// The per-test sibling tree, which `Fixture`'s own `Drop` cannot reach.
     fn clean_up(name: &str) {
-        let _ = fs::remove_dir_all(std::env::temp_dir().join(format!("slopdesk-invariants-{name}-targets")));
+        let _ignored =
+            fs::remove_dir_all(std::env::temp_dir().join(format!("slopdesk-invariants-{name}-targets")));
     }
 
     #[test]

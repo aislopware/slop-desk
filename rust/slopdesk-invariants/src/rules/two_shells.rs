@@ -379,6 +379,8 @@ pub fn the_shared_vocabulary_only_shrinks(tree: &Tree) -> Report {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
+
     use std::fmt::Write as _;
 
     use super::CONNECT;

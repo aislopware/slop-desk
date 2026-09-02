@@ -211,7 +211,7 @@ pub fn pkill_never_reaches_the_developers_host(tree: &Tree) -> Report {
                 continue;
             }
             let end = lines.len().min(number + WINDOW);
-            let site = lines[number..end].join(" ");
+            let site = lines.get(number..end).unwrap_or_default().join(" ");
             if site.contains("slopdesk-hostd") && !site.contains("--port") && !site.contains("DerivedData") {
                 found.push(format!("{}:{}: {}", path.display(), number + 1, line.trim()));
             }
@@ -687,6 +687,8 @@ fn unambiguous_reaches(
     alternatives
 }
 
+/// Every module a `lib.rs` declares is reached from somewhere — by its path, by a name the crate
+/// re-exports, or by a call to a method it adds to another module's type.
 pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
     let mut report = Report::new();
     let sources = report.corpus(tree, &["rust"], &["rs"]);

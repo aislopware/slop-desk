@@ -335,7 +335,6 @@ public final class LivePaneDriver: PaneDriving {
         let verdict = reason.withUnsafeMutableBufferPointer { out in
             door(out.baseAddress, out.count, &written)
         }
-        // swiftlint:disable:next optional_data_string_conversion
         let said = String(decoding: reason.prefix(max(0, min(written, reasonCapacity))), as: UTF8.self)
         switch verdict {
         case SLOPDESK_PANE_CONNECT_OK: return .connected
@@ -400,7 +399,6 @@ private func onEvent(
     // mis-encoded must still reach the log as a replacement character rather than vanishing.
     var said = ""
     if textLength > 0, let text {
-        // swiftlint:disable:next optional_data_string_conversion
         said = String(decoding: UnsafeBufferPointer(start: text, count: textLength), as: UTF8.self)
     }
     guard let folded = SlopDeskClient.Event(event.pointee, text: said) else { return }

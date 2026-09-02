@@ -65,6 +65,10 @@ pub type Failure = String;
 /// # Errors
 /// The first failure, phrased for a reader: a malformed lock line names its line, a digest mismatch
 /// names the URL, a changed archive layout names the archive.
+#[expect(
+    clippy::print_stdout,
+    reason = "stdout is the provisioning log `just provision` shows"
+)]
 pub fn run(layout: &Layout, mode: Mode, wanted: &[String]) -> Result<Tally, Failure> {
     let lock_path = layout.lock();
     let text = fs::read_to_string(&lock_path).map_err(|cause| format!("{}: {cause}", lock_path.display()))?;
@@ -239,6 +243,10 @@ fn relative(path: &Path, tools: &Path) -> String {
 }
 
 /// One indented progress line, matching the shell's own two-space `log`.
+#[expect(
+    clippy::print_stdout,
+    reason = "stdout is the provisioning log `just provision` shows"
+)]
 fn log(message: &str) {
     println!("  {message}");
 }

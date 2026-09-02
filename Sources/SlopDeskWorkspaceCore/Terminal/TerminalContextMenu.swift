@@ -341,11 +341,11 @@ public enum TerminalContextMenu {
         [BlockContext: [BlockItem: (separatorBefore: Bool, title: String, symbol: String)]] =
         Dictionary(uniqueKeysWithValues: [false, true].flatMap { collapsed in
             [false, true].map { bookmarked -> (
-                BlockContext, [BlockItem: (separatorBefore: Bool, title: String, symbol: String)]
+                BlockContext, [BlockItem: (separatorBefore: Bool, title: String, symbol: String)],
             ) in
                 let key = BlockContext(collapsed: collapsed, bookmarked: bookmarked)
                 let table = BlockItem.allCases.compactMap { item -> (
-                    BlockItem, (separatorBefore: Bool, title: String, symbol: String)
+                    BlockItem, (separatorBefore: Bool, title: String, symbol: String),
                 )? in
                     let blob = wsAnswerBytes { out, cap in
                         Int(slopdesk_term_menu_block_item(item.index, key.bits, out, cap))

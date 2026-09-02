@@ -10,6 +10,7 @@
 #![expect(
     clippy::expect_used,
     clippy::panic,
+    clippy::indexing_slicing,
     reason = "a panic in a test is the failure report, not a fault"
 )]
 

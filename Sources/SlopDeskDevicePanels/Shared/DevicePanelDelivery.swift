@@ -114,7 +114,6 @@ package struct DevicePanelBlob {
             return ""
         }
         defer { cursor += length }
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: bytes[cursor..<(cursor + length)], as: UTF8.self)
     }
 

@@ -237,13 +237,12 @@ try_err = "deny"
 
 # Disabled, with a reason: both want `f64::mul_add`, the fused multiply-add `CLAUDE.md` forbids —
 # FMA rounds once where the wire rounds twice, which moves the bit patterns the golden vectors pin.
-suboptimal_flops = "allow"
-imprecise_flops = "allow"
-
 # One version of `nix` reaches this graph through `slopdesk-hostsession` and one through
 # `slopdesk-posix` beneath it; they are the same version, and the lint prices the transitive graph
 # rather than this manifest.
 multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
 
 [dev-dependencies]
 # The tree a topology is built OVER, for the two intent tests that need a real workspace to

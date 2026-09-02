@@ -275,6 +275,12 @@ fn fallback_token(tree: &Tree, enum_name: &str, case: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::expect_used,
+        clippy::panic,
+        reason = "a panic in a test is the failure report"
+    )]
+
     use crate::tests::Fixture;
 
     /// A table with one literal choice, one crate-owned one, and the Swift that reads both.

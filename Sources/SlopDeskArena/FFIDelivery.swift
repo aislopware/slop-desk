@@ -69,7 +69,6 @@ public func ffiAnswerText(
     capacity: Int = 4096,
     _ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int,
 ) -> String {
-    // swiftlint:disable:next optional_data_string_conversion
     String(decoding: ffiAnswerBytes(capacity: capacity, door), as: UTF8.self)
 }
 

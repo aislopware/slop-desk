@@ -127,7 +127,6 @@ public enum StoreGitCadence {
         }
         guard plan.booked, plan.primary > 0, plan.primary <= out.count else { return nil }
         return Booking(
-            // swiftlint:disable:next optional_data_string_conversion
             primary: String(decoding: out.prefix(plan.primary), as: UTF8.self), alias: plan.alias,
         )
     }
@@ -158,7 +157,6 @@ public enum StoreGitCadence {
             }
         }
         guard count > 0, count <= out.count else { return nil }
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: out.prefix(count), as: UTF8.self)
     }
 }

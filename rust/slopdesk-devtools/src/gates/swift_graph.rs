@@ -301,6 +301,11 @@ pub fn attribute(graph: &Graph, changed: &[String]) -> Selection {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        reason = "a panic in a test is the failure report"
+    )]
     use std::collections::BTreeSet;
 
     use super::{Graph, Selection, attribute};
@@ -405,6 +410,7 @@ mod tests {
 
     /// The graph cannot see a subprocess spawn, so the edge is hand-mapped.
     #[test]
+    #[expect(clippy::panic, reason = "a panic in a test is the failure report")]
     fn a_spawned_binary_pulls_in_the_suite_that_spawns_it() {
         let picked = select(&["Sources/slopdesk-hostd/main.swift"]);
         let Selection::Targets(names) = picked else {

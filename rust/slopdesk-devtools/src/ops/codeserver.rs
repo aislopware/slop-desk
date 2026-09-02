@@ -96,9 +96,9 @@ fn measure_once(binary: &Path, fixture_home: &Path) -> Result<Duration, String> 
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    let _ = child.kill();
-    let _ = child.wait();
-    let _ = fs::remove_dir_all(fixture_home);
+    let _ignored = child.kill();
+    let _ignored = child.wait();
+    let _ignored = fs::remove_dir_all(fixture_home);
 
     elapsed.ok_or_else(|| {
         format!(
@@ -175,13 +175,14 @@ pub fn run(root: &Path, runs: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     use std::path::PathBuf;
 
     /// A directory is not a binary, and neither is a file without an execute bit.
     #[test]
     fn only_an_executable_file_counts_as_the_binary() {
         let root = std::env::temp_dir().join(format!("slopdesk-ops-exec-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ignored = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("the scratch directory is creatable");
         let plain = root.join("plain");
         std::fs::write(&plain, "not a program").expect("the file is writable");
@@ -195,7 +196,7 @@ mod tests {
             super::is_executable(std::path::Path::new("/bin/sh")),
             "/bin/sh is"
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ignored = std::fs::remove_dir_all(&root);
     }
 
     /// An explicit override wins over the vendored prefix and over `PATH`, unexamined.

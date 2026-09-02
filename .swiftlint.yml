@@ -117,6 +117,15 @@ disabled_rules:
   # --fix does not compile cannot be a gate, and its warnings cannot be triaged either.
   - unused_import
 
+  # ---- Wrong advice at this repo's one FFI seam: bytes from Rust are UTF-8 by contract ----
+  # optional_data_string_conversion flags `String(decoding:as:)` and asks for the failable
+  # `String(data:encoding:)`, on the theory that invalid UTF-8 should surface as nil. Every hit on
+  # this tree is a read-back from a `slopdesk_*` door: Rust hands over a `(ptr, len)` it built from
+  # a `&str`, so the bytes cannot be invalid, and the nil the rule wants would be an unreachable
+  # branch every caller had to invent an answer for. The tree carried 50 identical per-line
+  # disables for it, which is the shape of a rule that should be off, not a rule being obeyed.
+  - optional_data_string_conversion
+
   # ---- Niche / leak-debug rule, not a production quality signal ----
   - required_deinit                         # would require an explicit deinit on EVERY class
 

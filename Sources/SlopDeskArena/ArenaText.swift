@@ -59,7 +59,6 @@ public enum ArenaText {
     /// and answering `""` for a byte sequence the far side considered a string would lose the whole
     /// field rather than one character of it.
     public static func text(_ arena: UnsafeRawBufferPointer, _ offset: Int, _ length: Int) -> String {
-        // swiftlint:disable:next optional_data_string_conversion
         String(decoding: span(arena, offset, length), as: UTF8.self)
     }
 
@@ -101,7 +100,6 @@ public enum ArenaText {
     /// disagreeing with what the crate's own reader does with the same bytes.
     public static func text(_ arena: Data, offset: Int, length: Int) -> String {
         guard let range = range(in: arena, offset: offset, length: length) else { return "" }
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: arena[range], as: UTF8.self)
     }
 

@@ -31,7 +31,7 @@ const GUI_LEAF_CORE: &str = "Sources/SlopDeskClientCore/Pane/GuiLeafCore.swift";
 /// The three shell files that may NOT re-derive the kind: two leaves and the Mac's control bar.
 /// Named individually rather than by directory, because `spec(for:)` is a legitimate call for a
 /// fact that is not fixed per pane id — only the `.kind` reading is barred.
-const GUI_LEAF_SHELLS: &[&str] = &[
+const GUI_LEAF_SHELLS: [&str; 3] = [
     "Sources/SlopDeskMacUI/Pane/MacGuiLeafView.swift",
     "Sources/SlopDeskMacUI/Pane/MacGuiPaneControls.swift",
     "Sources/SlopDeskPhoneUI/Pane/GuiLeafView.swift",
@@ -43,7 +43,7 @@ const DISPATCH: &str = "Sources/SlopDeskMacUI/Input/WorkspaceKeyDispatcher.swift
 /// The GUI control bar's button, re-assigned about twice a second forever.
 const PLATE: &str = "Sources/SlopDeskMacUI/Panel/MacPlateIconButton.swift";
 /// The two spinners, both driven by a `CADisplayLink`.
-const SPINNERS: &[&str] = &[
+const SPINNERS: [&str; 2] = [
     "Sources/SlopDeskMacUI/Overlays/MacAgentGlyph.swift",
     "Sources/SlopDeskMacUI/Columns/MacStatusMark.swift",
 ];
@@ -508,7 +508,7 @@ mod tests {
     fn a_dfs_inside_a_drag_update_is_red() {
         let fixture = Fixture::new("macui-leaf");
         fixture.write(super::GUI_LEAF_CORE, "private var cachedPaneKind: PaneKind?\n");
-        for shell in super::GUI_LEAF_SHELLS {
+        for shell in &super::GUI_LEAF_SHELLS {
             // Asking the tree for something that is NOT fixed per pane id stays legal — the ban is
             // on the `.kind` reading, not on the function.
             fixture.write(shell, "let detached = store.tree.isDetached(paneID)\n");
@@ -582,7 +582,7 @@ mod tests {
     #[test]
     fn a_bezier_path_per_dot_per_frame_is_red() {
         let fixture = Fixture::new("macui-spinner");
-        for spinner in super::SPINNERS {
+        for spinner in &super::SPINNERS {
             fixture.write(
                 spinner,
                 "// `fillEllipse` rather than `NSBezierPath(ovalIn:).fill()` — see the \

@@ -169,7 +169,7 @@ pub fn view_targets_reach_doors_through_readouts(tree: &Tree) -> Report {
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: PLATFORM_ARGUMENT_DOORS,
+            exempt: &PLATFORM_ARGUMENT_DOORS,
             message: "{files} — a view file reached the FFI header directly. Doors are called from a \
                       SlopDeskClientCore / SlopDeskWorkspaceCore readout, which is what keeps the view \
                       layer thin and testable without a window server. The one exception is a door whose \
@@ -247,7 +247,7 @@ const VIEW_TARGETS: &[&str] = &[
 /// `MetalLayerBackedView` is deliberately NOT here: it carried a dead `import CSlopDeskFFI` with no
 /// door behind it until `3391e574`, and an allowlist entry for a file that calls nothing is an
 /// exemption waiting to be used for something else.
-const PLATFORM_ARGUMENT_DOORS: &[&str] = &["Sources/SlopDeskVideoClientMac/MacMetalLayerBackedView.swift"];
+const PLATFORM_ARGUMENT_DOORS: [&str; 1] = ["Sources/SlopDeskVideoClientMac/MacMetalLayerBackedView.swift"];
 
 /// The two targets BELOW the presentation layer — the domain, shared by both renderers.
 ///

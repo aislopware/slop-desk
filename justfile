@@ -275,6 +275,8 @@ lint-swift:
 # the state it detects the hooks are the thing that is missing. The fourth asks git rather than the
 # working tree, because a recording that was made and then rejected is still on disk and no change
 # to the repository can take it out of someone's checkout.
+
+# what no rule can decide by reading: every crate is reached by a recipe, the FFI artifact is not older than its sources, the hooks are installed HERE, no committed recording carries its machine
 lint-reach:
     @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- reach
     @cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ffi --check

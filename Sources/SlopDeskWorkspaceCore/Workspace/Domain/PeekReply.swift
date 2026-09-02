@@ -102,7 +102,6 @@ public struct PeekContent: Equatable, Sendable {
             // The producer is `slopdesk_workspace::peek_reply`, so these bytes are a Rust `String`'s
             // and cannot be invalid UTF-8. A failable init would add a `nil` branch with no failure
             // mode behind it — and the caller would have to invent a meaning for it.
-            // swiftlint:disable:next optional_data_string_conversion
             lines.append(String(decoding: bytes[cursor..<(cursor + run)], as: UTF8.self))
             cursor += run
         }
@@ -220,7 +219,6 @@ public enum PeekReplyFormatter {
             slopdesk_ws_peek_reply_text(bytes, len, out, cap)
         }
         // Rust's, therefore valid UTF-8 — see the note in `decodeLines`.
-        // swiftlint:disable:next optional_data_string_conversion
         return answer.map { String(decoding: $0, as: UTF8.self) }
     }
 

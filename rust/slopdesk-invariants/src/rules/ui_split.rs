@@ -791,7 +791,7 @@ mod tests {
     }
 
     /// Fourteen shared sink names plus the one platform floor, and eight shared pipeline callbacks.
-    const SHARED_SINKS: &[&str] = &[
+    const SHARED_SINKS: [&str; 14] = [
         "onPaneReady",
         "onPaneClosed",
         "onFocusChanged",
@@ -824,7 +824,7 @@ mod tests {
             .copied()
             .chain(["onRemoteCursorChanged"])
             .collect();
-        halves(&fixture, &mac, SHARED_SINKS, &mac_pipe, SHARED_PIPE);
+        halves(&fixture, &mac, &SHARED_SINKS, &mac_pipe, SHARED_PIPE);
         assert!(super::the_two_video_halves_agree(&fixture.tree()).is_clean());
 
         // A sink wired on one half and forgotten on the other.

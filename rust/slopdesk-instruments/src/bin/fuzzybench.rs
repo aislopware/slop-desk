@@ -35,6 +35,7 @@
     clippy::cast_precision_loss,
     reason = "counts far below 2^53 divided into a rate"
 )]
+#![expect(clippy::print_stdout, reason = "the folded verdict IS this bench's output")]
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write as _;

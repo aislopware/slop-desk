@@ -117,7 +117,6 @@ try_err = "deny"
 # `resample` — each carry the conflict with the denied `unreachable_pub` and the `#![expect]` that
 # resolves it, at the site. The old crate-wide allow listed three of the four, which is what a
 # manifest-level exemption always drifts into.
-
 # Disabled, with a reason — the same two every workspace disables, for the same two reasons.
 multiple_crate_versions = "allow"
 suboptimal_flops = "allow"

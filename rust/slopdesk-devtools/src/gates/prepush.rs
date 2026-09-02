@@ -43,6 +43,12 @@
 //! skipped. The moment Swift boots a daemon again the derivation sees it, which is the property
 //! worth keeping — a hand-written list would have gone stale in the other, dangerous direction.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the skip notice and the stale-fixture warning are this gate's report"
+)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -265,6 +271,7 @@ fn collect_swift(dir: &Path, into: &mut Vec<std::path::PathBuf>) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "a panic in a test is the failure report")]
     use std::collections::BTreeSet;
     use std::fs;
 

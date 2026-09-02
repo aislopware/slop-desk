@@ -183,7 +183,6 @@ public enum InputEvent: Equatable, Sendable {
             let span = data.dropFirst(Int(flat.text_offset))
             // Not the failable initializer: the decode above rejected non-UTF-8 text as malformed,
             // so a second check here would be a second guard with an unreachable arm.
-            // swiftlint:disable:next optional_data_string_conversion
             return .text(String(decoding: span, as: UTF8.self), tag: flat.tag)
         }
     }

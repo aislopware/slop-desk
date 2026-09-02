@@ -52,6 +52,12 @@
 //!   another crate left the gate green while the obligation it names — `rust/slopdesk-gfsimd`'s
 //!   `unsafe` — went unexercised. [`runs_miri_for`] asks the whole question.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the unreached names are this gate's report"
+)]
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -420,6 +426,7 @@ fn any_rust_file_matching(dir: &Path, needles: &[&str]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     use std::collections::BTreeSet;
     use std::path::Path;
 
@@ -542,7 +549,7 @@ mod tests {
     #[test]
     fn a_backtick_on_a_commented_line_is_never_executed() {
         let witness = std::env::temp_dir().join("slopdesk-reach-commented-backtick");
-        let _ = std::fs::remove_file(&witness);
+        let _ignored = std::fs::remove_file(&witness);
         let raw = format!("# echo `touch {} && echo ran`\n", witness.display());
         let expanded = plan(&raw, Path::new("/"));
         assert!(expanded.trim().is_empty(), "{expanded}");

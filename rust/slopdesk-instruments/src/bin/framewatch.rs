@@ -52,6 +52,12 @@
 // reachable only from the tests. They are still the port, and deleting them under a `cfg` would be
 // two spellings of the instrument rather than one.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+// Every setup refusal is a sentence on stderr for the operator, on both halves of the `cfg`; the
+// reports themselves are stdout, and only the capture half has any.
+#![expect(
+    clippy::print_stderr,
+    reason = "stderr is this instrument's refusal; the report is stdout"
+)]
 
 /// FNV-1a's 64-bit offset basis. Also the checksum of a frame whose plane could not be read, which
 /// is the Swift original's behaviour: the arrival still counts, the content just says nothing.
@@ -238,6 +244,10 @@ fn content_checksum(bytes: &[u8], stride: usize, height: usize) -> u64 {
     reason = "the mean of at most a few thousand bytes; the Swift original divided the same two integers as \
               Doubles and the report must stay comparable"
 )]
+#[expect(
+    clippy::integer_division,
+    reason = "the quarter marks that bound the central half are floors, as the Swift original cut them"
+)]
 fn mean_luma(bytes: &[u8], stride: usize, height: usize) -> Option<f64> {
     let width = stride.min(SAMPLE_WIDTH_CAP);
     let mut sum = 0u64;
@@ -421,7 +431,9 @@ fn latency_lines(source_flips: usize, client_flips: usize, deltas: &[f64]) -> Ve
     let mut sorted = deltas.to_vec();
     sorted.sort_by(f64::total_cmp);
     let count = sorted.len();
+    #[expect(clippy::integer_division, reason = "the floor is the rank being read")]
     let p50 = sorted.get(count / 2).copied().unwrap_or(0.0);
+    #[expect(clippy::integer_division, reason = "the floor is the rank being read")]
     let p90 = sorted.get(count.saturating_mul(9) / 10).copied().unwrap_or(0.0);
     let low = sorted.first().copied().unwrap_or(0.0);
     let high = sorted.last().copied().unwrap_or(0.0);
@@ -447,6 +459,10 @@ mod capture {
     #![expect(
         clippy::redundant_pub_crate,
         reason = "conflicts with the denied `unreachable_pub`"
+    )]
+    #![expect(
+        clippy::print_stdout,
+        reason = "the window list and the histogram ARE this instrument's output"
     )]
 
     use std::sync::{Arc, Mutex};
@@ -851,19 +867,6 @@ mod capture {
 // Entry points
 // ---------------------------------------------------------------------------------------------
 
-/// Parses the command line, or ends the process with the Swift original's message.
-#[cfg(target_os = "macos")]
-fn options_or_exit() -> Options {
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
-    match parse_options(&arguments) {
-        Ok(options) => options,
-        Err(message) => {
-            eprintln!("{message}");
-            std::process::exit(1)
-        },
-    }
-}
-
 /// `ScreenCaptureKit` delivers several of its completions through the MAIN run loop, so the run
 /// happens on a worker and `main` parks in the loop — the Swift original's `RunLoop.main.run()`,
 /// and for the reason its own comment gave: a wait on the main thread deadlocks the very
@@ -872,9 +875,19 @@ fn options_or_exit() -> Options {
 /// `become_accessory` first, and on the main thread, because `SCStream::startCapture` aborts with
 /// `CGS_REQUIRE_INIT` without a window-server connection. A refusal is reported and not fatal: the
 /// failure that follows is the framework's own, and it says more.
+///
+/// The command line is parsed first, and an unparsable one ends the process with the Swift
+/// original's message before any of that.
 #[cfg(target_os = "macos")]
 fn main() -> ! {
-    let options = options_or_exit();
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let options = match parse_options(&arguments) {
+        Ok(options) => options,
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(1)
+        },
+    };
     if !slopdesk_apple_nsapp::become_accessory() {
         eprintln!("framewatch: no window-server connection — capture will probably refuse to start");
     }
@@ -892,6 +905,8 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unreachable, reason = "a let-else in a test has nowhere else to go")]
+
     use super::{
         CHECKSUM_OFFSET, DEFAULT_FPS, DEFAULT_SECONDS, Flip, FlipDetector, MAX_SECONDS, Options, bin_count,
         cadence_lines, content_checksum, dwell, latency_lines, mean_luma, pair_deltas, parse_options,

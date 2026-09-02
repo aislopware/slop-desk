@@ -38,6 +38,11 @@ pub fn cached(pattern: &str) -> &'static Regex {
     // of them. Leaving Rust's default in place made `$` mean end-of-FILE, which is not a
     // stricter reading of the same rule — it is a different rule that happens to be satisfied
     // by one line in the file, so the extraction reads empty and `same` reports it as stale.
+    #[expect(
+        clippy::panic,
+        reason = "every pattern is a literal in this crate; one that fails to compile is a defect in the \
+                  gate, not an input"
+    )]
     let compiled: &'static Regex = Box::leak(Box::new(
         regex::RegexBuilder::new(pattern)
             .multi_line(true)

@@ -118,6 +118,7 @@ pub fn log_dir() -> Result<PathBuf, String> {
 }
 
 /// One line of narration, prefixed by the tool that is speaking.
+#[expect(clippy::print_stdout, reason = "narration is stdout by convention")]
 pub fn say(tool: &str, what: &str) {
     println!("{tool}: {what}");
 }
@@ -178,11 +179,12 @@ pub fn xcodegen(root: &Path, spec: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     /// All four variables, and the two sub-directories actually made.
     #[test]
     fn a_container_names_four_directories_and_creates_them() {
         let root = std::env::temp_dir().join(format!("slopdesk-ops-container-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ignored = std::fs::remove_dir_all(&root);
         let pairs = super::container(&root).expect("the container is creatable");
 
         let names: Vec<&str> = pairs.iter().map(|(key, _)| key.as_str()).collect();
@@ -194,7 +196,7 @@ mod tests {
         ]);
         assert!(root.join("scrollback").is_dir(), "the journal directory is made");
         assert!(root.join("drop").is_dir(), "the file-drop directory is made");
-        let _ = std::fs::remove_dir_all(&root);
+        let _ignored = std::fs::remove_dir_all(&root);
     }
 
     /// Both app names resolve, and a third is refused rather than guessed at.

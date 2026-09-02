@@ -207,7 +207,6 @@ enum ConnectGate {
         guard verdict.host_length > 0, end <= hostBytes.count else { return .refused("") }
         // The span is a slice of bytes this function derived from a `String`, so it cannot be
         // invalid UTF-8; a failable decode here would add a branch meaning "the host has no text".
-        // swiftlint:disable:next optional_data_string_conversion
         let trimmed = String(decoding: hostBytes[verdict.host_offset..<end], as: UTF8.self)
         return .target(ConnectionTarget(
             host: trimmed,

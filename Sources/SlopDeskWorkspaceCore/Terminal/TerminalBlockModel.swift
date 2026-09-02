@@ -232,7 +232,6 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
         withUnsafeTemporaryAllocation(of: UInt8.self, capacity: Self.durationLabelCapacity) { buffer in
             let written = slopdesk_block_duration_label(fields, buffer.baseAddress, buffer.count)
             guard written > 0, written <= buffer.count else { return nil }
-            // swiftlint:disable:next optional_data_string_conversion
             return String(decoding: buffer[..<written], as: UTF8.self)
         }
     }

@@ -8,6 +8,12 @@
 //! `LaunchAgent`, restarts a live daemon, rewrites a generated `.xcodeproj`, re-downloads a
 //! vendor's themes, or drives an eighty-second soak — which is why none of them is in `just check`.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the report and the usage are this binary's whole output"
+)]
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -38,8 +44,10 @@ fn main() -> ExitCode {
     // The reaper is answered before the repo root is resolved: it is this binary re-executed by the
     // soak with nothing but a pid file and a scratch directory, and it must still run when the tree
     // it was started from has been moved out from under it.
-    if arguments.first().is_some_and(|first| first == "soak-reap") {
-        return soak_reap(&arguments[1..]);
+    if let Some((first, rest)) = arguments.split_first()
+        && first == "soak-reap"
+    {
+        return soak_reap(rest);
     }
 
     let mut given: Option<PathBuf> = None;
@@ -59,11 +67,10 @@ fn main() -> ExitCode {
         },
     };
 
-    let Some(verb) = arguments.first().cloned() else {
+    let Some((verb, rest)) = arguments.split_first() else {
         eprint!("{USAGE}");
         return ExitCode::from(2);
     };
-    let rest = &arguments[1..];
 
     match verb.as_str() {
         "restart-hostd" => restart_hostd(&root, rest),
@@ -128,7 +135,7 @@ fn restart_hostd(root: &Path, arguments: &[String]) -> ExitCode {
 
 /// `install <superd|screend|hostd> [--force] [--uninstall]`.
 fn install(root: &Path, arguments: &[String]) -> ExitCode {
-    let Some(name) = arguments.first() else {
+    let Some((name, rest)) = arguments.split_first() else {
         eprintln!("slopdesk-ops: install needs a daemon name (superd, screend or hostd)");
         return ExitCode::from(2);
     };
@@ -139,7 +146,6 @@ fn install(root: &Path, arguments: &[String]) -> ExitCode {
             return ExitCode::from(2);
         },
     };
-    let rest = &arguments[1..];
     let force = has_flag(rest, "--force");
     for argument in rest {
         if argument != "--force" && argument != "--uninstall" {
@@ -209,16 +215,20 @@ fn measure_code_server(root: &Path, arguments: &[String]) -> ExitCode {
 fn video_input(root: &Path, arguments: &[String]) -> ExitCode {
     let mut window = std::env::var("WID").unwrap_or_else(|_| "267".to_owned());
     let mut rest = arguments;
-    if rest.first().is_some_and(|first| first == "--window-id") {
-        let Some(given) = rest.get(1) else {
+    if let Some((flag, tail)) = rest.split_first()
+        && flag == "--window-id"
+    {
+        let Some((given, tail)) = tail.split_first() else {
             eprintln!("slopdesk-ops: --window-id needs a window id");
             return ExitCode::from(2);
         };
         window.clone_from(given);
-        rest = &rest[2..];
+        rest = tail;
     }
-    if rest.first().is_some_and(|first| first == "--") {
-        rest = &rest[1..];
+    if let Some((flag, tail)) = rest.split_first()
+        && flag == "--"
+    {
+        rest = tail;
     }
     finish(videoinput::run(root, &window, rest))
 }
@@ -233,8 +243,8 @@ fn run_soak(root: &Path, arguments: &[String]) -> ExitCode {
         .and_then(|given| given.parse::<u64>().ok())
         .unwrap_or(soak::DEFAULT_THRESHOLD);
     let mut index = 0;
-    while index < arguments.len() {
-        match arguments[index].as_str() {
+    while let Some(argument) = arguments.get(index) {
+        match argument.as_str() {
             "--threshold" => {
                 let Some(given) = arguments.get(index + 1).and_then(|text| text.parse::<u64>().ok()) else {
                     eprintln!("slopdesk-ops: --threshold needs a byte count");
@@ -264,10 +274,10 @@ fn soak_reap(arguments: &[String]) -> ExitCode {
     let mut pidfile = PathBuf::new();
     let mut work = PathBuf::new();
     let mut index = 0;
-    while index + 1 < arguments.len() {
-        match arguments[index].as_str() {
-            "--pidfile" => pidfile = PathBuf::from(&arguments[index + 1]),
-            "--work" => work = PathBuf::from(&arguments[index + 1]),
+    while let Some([flag, value]) = arguments.get(index..index + 2) {
+        match flag.as_str() {
+            "--pidfile" => pidfile = PathBuf::from(value),
+            "--work" => work = PathBuf::from(value),
             other => {
                 eprintln!("slopdesk-ops: unknown option for soak-reap: {other}");
                 return ExitCode::from(2);

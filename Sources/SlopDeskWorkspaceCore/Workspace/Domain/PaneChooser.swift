@@ -73,7 +73,6 @@ public enum PaneChooserRegistry {
             // The repairing initialiser, matching `ArenaText`: these bytes came back from a Rust
             // `String`, so a failable init has no reachable arm and answering `""` would lose the
             // whole field rather than one character of it.
-            // swiftlint:disable:next optional_data_string_conversion
             return String(decoding: blob[cursor..<cursor + length], as: UTF8.self)
         }
         return PaneChooserOption(

@@ -102,6 +102,7 @@ impl CommentStyle {
 }
 
 /// One file, with the two views every rule reads.
+#[derive(Debug)]
 pub struct Source {
     /// The file verbatim.
     pub text: String,
@@ -265,7 +266,7 @@ fn block_comment_width(rest: &str, nests: bool) -> usize {
     let mut index = 2;
     let mut depth = 1_usize;
     while index < bytes.len() {
-        if bytes[index] == b'*' && bytes.get(index + 1) == Some(&b'/') {
+        if bytes.get(index) == Some(&b'*') && bytes.get(index + 1) == Some(&b'/') {
             depth -= 1;
             index += 2;
             if depth == 0 {
@@ -273,7 +274,7 @@ fn block_comment_width(rest: &str, nests: bool) -> usize {
             }
             continue;
         }
-        if nests && bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'*') {
+        if nests && bytes.get(index) == Some(&b'/') && bytes.get(index + 1) == Some(&b'*') {
             depth += 1;
             index += 2;
             continue;
@@ -307,7 +308,11 @@ fn string_width(rest: &str, lang: Lang) -> Option<usize> {
                 opener += 1;
             }
             let hashes = if raw {
-                bytes[opener..].iter().take_while(|byte| **byte == b'#').count()
+                bytes
+                    .iter()
+                    .skip(opener)
+                    .take_while(|byte| **byte == b'#')
+                    .count()
             } else {
                 0
             };
@@ -347,7 +352,7 @@ fn string_width(rest: &str, lang: Lang) -> Option<usize> {
             Lang::Swift => has_hashes(bytes, index + 1, hashes),
             Lang::Rust | Lang::C => !raw,
         };
-        if bytes[index] == b'\\' && escapes {
+        if bytes.get(index) == Some(&b'\\') && escapes {
             // `\(` re-enters CODE, and the code it re-enters can open another literal:
             // `"\(m["x"])"` is one literal, not two, and a scanner that read its inner
             // quote as the outer's closer would resume INSIDE the string and blank
@@ -360,9 +365,10 @@ fn string_width(rest: &str, lang: Lang) -> Option<usize> {
             index += 2 + if lang == Lang::Swift { hashes } else { 0 };
             continue;
         }
-        if bytes[index] == b'"'
-            && bytes[index..].len() >= quotes
-            && bytes[index..index + quotes].iter().all(|byte| *byte == b'"')
+        if bytes.get(index) == Some(&b'"')
+            && bytes
+                .get(index..index + quotes)
+                .is_some_and(|run| run.iter().all(|byte| *byte == b'"'))
             && has_hashes(bytes, index + quotes, hashes)
         {
             return Some(index + quotes + hashes);
@@ -392,9 +398,9 @@ fn interpolation_width(rest: &str, lang: Lang) -> usize {
             index += width;
             continue;
         }
-        match bytes[index] {
-            b'(' => depth += 1,
-            b')' => {
+        match bytes.get(index) {
+            Some(b'(') => depth += 1,
+            Some(b')') => {
                 depth -= 1;
                 if depth == 0 {
                     return index + 1;
@@ -426,7 +432,7 @@ fn char_width(rest: &str, lang: Lang) -> Option<usize> {
         // on is how a stray tick would swallow a file.
         let limit = 14.min(bytes.len());
         return (3..limit)
-            .find(|index| bytes[*index] == b'\'')
+            .find(|index| bytes.get(*index) == Some(&b'\''))
             .map(|index| index + 1);
     }
     let width = rest[1..].chars().next()?.len_utf8();
@@ -441,6 +447,7 @@ fn rest_of_line_is_blank(rest: &str) -> bool {
 }
 
 /// The repository as a map from repo-relative path to contents.
+#[derive(Debug)]
 pub struct Tree {
     root: PathBuf,
     files: BTreeMap<PathBuf, Source>,
@@ -676,6 +683,12 @@ fn walk(root: &Path, dir: &Path, files: &mut BTreeMap<PathBuf, Source>) -> std::
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "a test asserts by panicking, and a fixture it built itself is not a runtime input"
+    )]
+
     use super::{CommentStyle, Lang, Source, blank_comments};
 
     #[test]

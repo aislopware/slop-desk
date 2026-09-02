@@ -63,10 +63,6 @@ strip = "debuginfo"
 # The strict block, copied rather than inherited — inheriting would mean being a workspace member,
 # which is what the profile forbids.
 [lints.rust]
-# `forbid`, not `deny`: the whole argument for this crate is that a mux over two sockets needs no
-# `unsafe`. `socket2` carries the sockopts and `std` carries the rest, so there is nothing left to
-# hand-write; `forbid` turns that from a fact about today's code into one no downstream `allow` can
-# undo — including the iOS client, which links this crate and is the reason it exists.
 unsafe_code = "forbid"
 
 missing_docs = "deny"
@@ -94,12 +90,11 @@ pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
 
-multiple_crate_versions = "allow"
-
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 panic_in_result_fn = "deny"
+indexing_slicing = "deny"
 integer_division = "deny"
 exit = "deny"
 todo = "deny"
@@ -107,6 +102,7 @@ unimplemented = "deny"
 unreachable = "deny"
 dbg_macro = "deny"
 print_stdout = "deny"
+print_stderr = "deny"
 mem_forget = "deny"
 rest_pat_in_fully_bound_structs = "deny"
 verbose_file_reads = "deny"
@@ -116,9 +112,14 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
+# `forbid`, not `deny`: the whole argument for this crate is that a mux over two sockets needs no
+# `unsafe`. `socket2` carries the sockopts and `std` carries the rest, so there is nothing left to
+# hand-write; `forbid` turns that from a fact about today's code into one no downstream `allow` can
+# undo — including the iOS client, which links this crate and is the reason it exists.
 # Disabled, with a reason:
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
 #   fused multiply-add `CLAUDE.md` forbids. Allowed in every workspace for that repo-wide reason,
 #   not because this crate does float math — it does none.
+multiple_crate_versions = "allow"
 suboptimal_flops = "allow"
 imprecise_flops = "allow"

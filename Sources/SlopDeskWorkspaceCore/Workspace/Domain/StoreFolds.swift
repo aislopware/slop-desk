@@ -117,7 +117,6 @@ public enum SupervisionFold {
             }
         }
         guard count > 0, count <= out.count else { return nil }
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: out.prefix(count), as: UTF8.self)
     }
 }
@@ -177,7 +176,6 @@ public enum MirrorFold {
             }
         }
         guard count <= out.count else { return .absent }
-        // swiftlint:disable:next optional_data_string_conversion
         let text = String(decoding: out.prefix(count), as: UTF8.self)
         switch source {
         case 1: return .hosted(text)
@@ -387,7 +385,6 @@ public enum MirrorFold {
             }
         }
         guard count > 0, count <= out.count else { return nil }
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: out.prefix(count), as: UTF8.self)
     }
 }

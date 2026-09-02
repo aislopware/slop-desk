@@ -183,7 +183,6 @@ public enum AnsiStyledParser {
                 cursor += length
                 // The repairing initialiser: the bytes came back from a Rust `String`, so no failure
                 // arm is reachable, and a preview must never lose a line to one byte.
-                // swiftlint:disable:next optional_data_string_conversion
                 runs.append(AnsiRun(text: String(decoding: slice, as: UTF8.self), style: style))
             }
             out.append(runs)

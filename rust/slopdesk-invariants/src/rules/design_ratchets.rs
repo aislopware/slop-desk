@@ -148,6 +148,11 @@ pub fn the_menu_bar_owns_no_chord(tree: &Tree) -> Report {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::indexing_slicing,
+        reason = "a test asserts by panicking, and a fixture it built itself is not a runtime input"
+    )]
+
     use crate::tests::Fixture;
 
     /// Enough files to clear the floor, none of them leaking.

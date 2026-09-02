@@ -20,6 +20,7 @@ use crate::text;
 use crate::tree::Tree;
 
 /// One table, its two spellings, and the floor below which the extraction is assumed stale.
+#[derive(Clone, Copy, Debug)]
 pub struct Vocabulary {
     /// What the table is called in a diagnostic.
     pub label: &'static str,
@@ -95,6 +96,7 @@ fn normalise(pairs: Vec<(String, String)>) -> BTreeSet<String> {
 /// The document field vocabulary is this shape: the same short name (`title`, `kind`) appears in
 /// several tables with different numbers, so a flat set would collide entries that are not the same
 /// entry, and two tables that swapped a number whole would compare equal.
+#[derive(Clone, Copy, Debug)]
 pub struct SectionedVocabulary {
     /// What the table is called in a diagnostic.
     pub label: &'static str,

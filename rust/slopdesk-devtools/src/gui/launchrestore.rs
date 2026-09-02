@@ -64,6 +64,8 @@
 //! that it is STABLE and DISJOINT, both of which are asserted rather than assumed, and neither
 //! depends on which digest produced the bytes.
 
+#![expect(clippy::print_stdout, reason = "the rendered layout is this gate's report")]
+
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::os::unix::fs::MetadataExt as _;
@@ -344,7 +346,7 @@ struct ClientProcess {
 impl Drop for ClientProcess {
     fn drop(&mut self) {
         reap(self.child.id(), "SlopDesk");
-        let _ = self.child.wait();
+        let _ignored = self.child.wait();
     }
 }
 
@@ -662,7 +664,7 @@ impl Gate<'_> {
         out.push_str(
             "\n==================================================================================\n",
         );
-        let _ = fs::write(self.work.join("missing-shell.txt"), &out);
+        let _ignored = fs::write(self.work.join("missing-shell.txt"), &out);
         complain(&out);
     }
 }
@@ -718,7 +720,7 @@ fn summarize_crash_report(path: &Path) -> String {
                 "        {name} +{} {}",
                 frame
                     .get("imageOffset")
-                    .map_or_else(String::new, std::string::ToString::to_string),
+                    .map_or_else(String::new, ToString::to_string),
                 frame.get("symbol").and_then(Value::as_str).unwrap_or_default()
             );
         }
@@ -1218,6 +1220,7 @@ fn await_spawns(gate: &Gate<'_>, client: &ClientProcess) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     const TREE: &str = r#"{
       "sessions": [
         { "tabs": [

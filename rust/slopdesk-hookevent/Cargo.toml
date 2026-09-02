@@ -106,6 +106,10 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
+# Disabled, with a reason:
+# - `multiple_crate_versions` (cargo): a duplicate deep in a dependency's tree is not ours.
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
+#   the fused multiply-add `CLAUDE.md` forbids.
 multiple_crate_versions = "allow"
 suboptimal_flops = "allow"
 imprecise_flops = "allow"

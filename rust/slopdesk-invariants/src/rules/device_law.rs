@@ -136,6 +136,8 @@ const CALLERS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Every device panel reaches its shared law through the one call in [`CALLERS`], and no panel
+/// tree re-derives the scale arithmetic the law owns.
 #[must_use]
 pub fn one_device_panel_law(tree: &Tree) -> Report {
     let mut report = Report::new();

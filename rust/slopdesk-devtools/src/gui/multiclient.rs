@@ -66,7 +66,7 @@ struct Instance {
 impl Drop for Instance {
     fn drop(&mut self) {
         reap(self.child.id(), "SlopDesk");
-        let _ = self.child.wait();
+        let _ignored = self.child.wait();
         self.control.unlink();
     }
 }
@@ -167,6 +167,7 @@ fn converge(
     clippy::too_many_lines,
     reason = "one gate is one narrative; splitting it hides which assertion follows which"
 )]
+#[expect(clippy::print_stdout, reason = "the census is this gate's report")]
 pub fn run(root: &Path) -> Result<(), String> {
     let work = work_dir(root, "multiclient-verify")?;
     let suite = Suite::for_gate("multiclient");
@@ -206,7 +207,7 @@ pub fn run(root: &Path) -> Result<(), String> {
             port::MULTICLIENT
         ),
     );
-    let _ = poll("two workspace channels", 40, || hostd.accepted_channels() == 2);
+    let _ignored = poll("two workspace channels", 40, || hostd.accepted_channels() == 2);
     let channels = hostd.accepted_channels();
     if channels != 2 {
         hostd.log.dump("hostd log", 0);
@@ -251,7 +252,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     };
     let panes = final_projection.panes;
     let live = |census: &[DaemonChild]| pty_pids(census).len();
-    let _ = poll(
+    let _ignored = poll(
         "the live shell count to reach the pane count",
         LIVE_SHELL_SETTLE,
         || live(&daemon_children(hostd.superd_pid())) == panes,
@@ -259,14 +260,16 @@ pub fn run(root: &Path) -> Result<(), String> {
     // REACHED, then HELD — never a single read the instant `converge` returns.
     let census = daemon_children(hostd.superd_pid());
     if live(&census) != panes {
+        #[expect(
+            clippy::integer_division,
+            reason = "the settle is an even count of whole seconds"
+        )]
+        let half_settle = LIVE_SHELL_SETTLE / 2;
         return Err(census_failed(
             &hostd,
             &census,
             panes,
-            &format!(
-                "and stayed there for {}s — that is a leak, not a churn",
-                LIVE_SHELL_SETTLE / 2
-            ),
+            &format!("and stayed there for {half_settle}s — that is a leak, not a churn"),
         ));
     }
     for second in 1..=LIVE_SHELL_HOLD {
@@ -517,6 +520,7 @@ fn arrange_and_shoot(work: &Path, a: &Instance, b: &Instance) {
     )
     .and_then(|answer| answer.trim().parse::<i64>().ok())
     .unwrap_or(1920);
+    #[expect(clippy::integer_division, reason = "a window width is whole points")]
     let half = (screen_width / 2 - 30).max(600);
 
     let mut x = 20;
@@ -533,7 +537,7 @@ fn arrange_and_shoot(work: &Path, a: &Instance, b: &Instance) {
                 instance.child.id()
             ),
         ] {
-            let _ = Command::new("/usr/bin/osascript")
+            let _ignored = Command::new("/usr/bin/osascript")
                 .args(["-e", &script])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -552,6 +556,7 @@ fn arrange_and_shoot(work: &Path, a: &Instance, b: &Instance) {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     use std::path::PathBuf;
 
     /// A scratch log holding `text`, at a path NO other test in this binary can be writing.

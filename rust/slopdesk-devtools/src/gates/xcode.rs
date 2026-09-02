@@ -31,6 +31,12 @@
 //! with the rest of `.build/`'s derived state, and Xcode.app working on the same project
 //! cannot evict it out from under the stamp.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the build steps and the xcodebuild failure are this gate's report"
+)]
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -498,6 +504,7 @@ fn collect_swift(dir: &Path, into: &mut Vec<std::path::PathBuf>) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "a panic in a test is the failure report")]
     use std::fs;
 
     use super::{declared_tests, executed_tests, simulator_udid};

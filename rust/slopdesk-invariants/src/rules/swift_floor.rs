@@ -68,7 +68,7 @@ enum Floor {
 }
 
 /// Every file the census names, and why it stays. Kept sorted by path.
-const FLOOR: &[(&str, Floor)] = &[
+const FLOOR: [(&str, Floor); 69] = [
     ("Sources/SlopDeskArena/ArenaText.swift", Floor::CallingConvention),
     (
         "Sources/SlopDeskArena/FFIDelivery.swift",
@@ -449,7 +449,7 @@ mod tests {
     /// the rule checks both directions and a fixture missing an entry would fail on the entry
     /// rather than on the drift the test is seeding.
     fn floor(fixture: &Fixture) -> &Fixture {
-        for &(path, _) in super::FLOOR {
+        for &(path, _) in &super::FLOOR {
             fixture.write(path, "import Foundation\n");
         }
         fixture

@@ -102,11 +102,13 @@ pub const TICK: Duration = Duration::from_millis(500);
 const SUPERD_DIRECTORY_ENV_KEY: &str = "SLOPDESK_SUPERD_DIR";
 
 /// One line of narration, prefixed by the gate that is speaking.
+#[expect(clippy::print_stdout, reason = "narration is stdout by convention")]
 pub fn say(gate: &str, what: &str) {
     println!("==> [{gate}] {what}");
 }
 
 /// One line of narration on stderr — what a red run is read off.
+#[expect(clippy::print_stderr, reason = "a red run is read off stderr")]
 pub fn complain(what: &str) {
     eprintln!("{what}");
 }
@@ -131,7 +133,7 @@ pub fn work_dir(root: &Path, name: &str) -> Result<PathBuf, String> {
 /// # Errors
 /// When the directory cannot be removed or made.
 pub fn fresh(directory: &Path) -> Result<(), String> {
-    let _ = fs::remove_dir_all(directory);
+    let _ignored = fs::remove_dir_all(directory);
     fs::create_dir_all(directory).map_err(|error| format!("{}: {error}", directory.display()))
 }
 
@@ -173,7 +175,7 @@ pub fn reap(pid: u32, name: &str) {
 /// Every gate opens with one. A gate that assumes it is the first thing to run today asserts
 /// against a daemon it did not start.
 pub fn kill_matching(pattern: &str) {
-    let _ = Command::new("/usr/bin/pkill")
+    let _ignored = Command::new("/usr/bin/pkill")
         .args(["-f", pattern])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -345,13 +347,13 @@ impl Suite {
     /// cfprefsd resolved it whatever `CFFIXED_USER_HOME` said, so the plist is in their
     /// `Preferences` directory and nowhere else.
     pub fn remove(&self) {
-        let _ = Command::new("/usr/bin/defaults")
+        let _ignored = Command::new("/usr/bin/defaults")
             .args(["delete", &self.name])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
         let plist = crate::ops::home().join(format!("Library/Preferences/{}.plist", self.name));
-        let _ = fs::remove_file(plist);
+        let _ignored = fs::remove_file(plist);
     }
 }
 
@@ -696,7 +698,7 @@ pub fn is_frontmost(pid: u32) -> bool {
 
 /// A full-screen grab, for the half of a gate a human reads.
 pub fn screenshot(path: &Path) {
-    let _ = Command::new("/usr/sbin/screencapture")
+    let _ignored = Command::new("/usr/sbin/screencapture")
         .args(["-x", &path.to_string_lossy()])
         .stderr(Stdio::null())
         .status();
@@ -842,8 +844,8 @@ impl Drop for Superd {
         if let Ok(raw) = i32::try_from(self.child.id()) {
             let _ = signal::kill(Pid::from_raw(raw), Signal::SIGKILL);
         }
-        let _ = self.child.wait();
-        let _ = fs::remove_dir_all(&self.directory);
+        let _ignored = self.child.wait();
+        let _ignored = fs::remove_dir_all(&self.directory);
     }
 }
 
@@ -974,7 +976,7 @@ impl Hostd {
 impl Drop for Hostd {
     fn drop(&mut self) {
         reap(self.child.id(), "slopdesk-hostd");
-        let _ = self.child.wait();
+        let _ignored = self.child.wait();
     }
 }
 
@@ -992,6 +994,7 @@ pub fn banner(lines: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     use std::path::PathBuf;
 
     /// The four gates hold four DIFFERENT ports. They ran back to back long before they were one
@@ -1033,7 +1036,7 @@ mod tests {
         let log = super::Log::at(path);
         assert_eq!(log.count("attached for pane"), 2);
         assert_eq!(log.tail(1), "idle");
-        let _ = std::fs::remove_dir_all(&root);
+        let _ignored = std::fs::remove_dir_all(&root);
     }
 
     /// A census sample's pty pids come back ASCENDING, so two samples taken at different moments

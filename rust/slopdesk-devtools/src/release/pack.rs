@@ -30,6 +30,12 @@
 //! workflow, ahead of this one (`docs/49`). Building it here would hide a multi-minute Rust + Zig
 //! build inside a packaging step, and it is stamped so the step costs nothing when nothing moved.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the staging ledger is this verb's report"
+)]
+
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
@@ -609,7 +615,7 @@ fn notarize_apps(layout: &Layout, settings: &Settings) -> Result<(), String> {
     let zip = layout
         .work
         .join(format!("slopdesk-apps-{}-arm64.zip", settings.version));
-    let _ = fs::remove_file(&zip);
+    let _ignored = fs::remove_file(&zip);
     proc::run(
         "ditto",
         &[
@@ -657,7 +663,7 @@ fn build_dmg(layout: &Layout, settings: &Settings) -> Result<PathBuf, String> {
     let dmg = layout
         .dist
         .join(format!("SlopDesk-{}-arm64.dmg", settings.version));
-    let _ = fs::remove_file(&dmg);
+    let _ignored = fs::remove_file(&dmg);
     proc::run(
         "hdiutil",
         &[
@@ -755,7 +761,7 @@ fn build_tarball(layout: &Layout, settings: &Settings) -> Result<PathBuf, String
     proc::step("Building the CLI tarball");
     let name = format!("slopdesk-cli-{}-arm64", settings.version);
     let tarball = layout.dist.join(format!("{name}.tar.gz"));
-    let _ = fs::remove_file(&tarball);
+    let _ignored = fs::remove_file(&tarball);
     proc::run(
         "tar",
         &[
@@ -819,6 +825,7 @@ fn checksums(layout: &Layout, artifacts: &[&Path]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "a panic in a test is the failure report")]
     use std::path::Path;
 
     use super::cargo_bin_dir;

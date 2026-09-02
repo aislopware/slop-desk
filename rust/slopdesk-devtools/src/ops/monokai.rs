@@ -248,6 +248,7 @@ fn latest_version(root: &Path) -> Result<String, String> {
 /// # Errors
 /// When the pin is unreadable, the download or unzip fails, the theme set drifted, or a theme
 /// cannot be transformed.
+#[expect(clippy::print_stdout, reason = "the theme ledger is this verb's report")]
 pub fn run(root: &Path, latest: bool) -> Result<(), String> {
     let pin_file = root.join("scripts/monokai.pin");
     let version = if latest {
@@ -263,7 +264,7 @@ pub fn run(root: &Path, latest: bool) -> Result<(), String> {
     say("monokai-sync", &format!("syncing Monokai Pro themes @ {version}"));
 
     let work = env::temp_dir().join(format!("slopdesk-monokai-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&work);
+    let _ignored = fs::remove_dir_all(&work);
     fs::create_dir_all(&work).map_err(|error| format!("{}: {error}", work.display()))?;
     let vsix = work.join("monokai.vsix");
 
@@ -311,7 +312,7 @@ pub fn run(root: &Path, latest: bool) -> Result<(), String> {
             applied.colors, applied.dropped, applied.seam
         );
     }
-    let _ = fs::remove_dir_all(&work);
+    let _ignored = fs::remove_dir_all(&work);
 
     if latest {
         fs::write(&pin_file, format!("{version}\n"))
@@ -327,6 +328,8 @@ pub fn run(root: &Path, latest: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
+    #![expect(clippy::indexing_slicing, reason = "a test drives a buffer it wrote itself")]
     /// A theme file shaped like the upstream ones, with an empty value and a stock seam.
     fn theme(label: &str) -> String {
         format!(

@@ -345,7 +345,6 @@ private func onEnded(
             // already lost its channel, so a byte the host mis-encoded must still reach the log as a
             // replacement character rather than turning the reason into `nil`. `ArenaText` reads the
             // arena the same way for the same reason.
-            // swiftlint:disable:next optional_data_string_conversion
             why = String(decoding: UnsafeBufferPointer(start: detail, count: detailLength), as: UTF8.self)
         }
         inbox.continuation.finish(throwing: SlopDeskTransportError.invalidState("mux: \(why)"))

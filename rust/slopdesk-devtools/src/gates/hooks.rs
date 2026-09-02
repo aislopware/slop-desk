@@ -124,6 +124,7 @@ fn installed_hooks(directory: &Path) -> Vec<String> {
 /// # Errors
 /// One message naming every missing stage and the command that fixes all of them at once, because
 /// `prek install` is idempotent and there is never a reason to install one stage alone.
+#[expect(clippy::print_stdout, reason = "the hook census is this gate's report")]
 pub fn run(root: &Path) -> Result<(), String> {
     let config_path = root.join(CONFIG);
     let config = std::fs::read_to_string(&config_path)

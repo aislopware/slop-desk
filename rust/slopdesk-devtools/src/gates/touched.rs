@@ -33,6 +33,8 @@
 //! Only a genuinely full run on a clean tree writes the pre-push markers, so a partial pass can
 //! never make a push skip tests it never ran.
 
+#![expect(clippy::print_stdout, reason = "the selection is this gate's report")]
+
 use std::fs;
 use std::path::Path;
 

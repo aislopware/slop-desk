@@ -398,7 +398,6 @@ private func text(_ request: OpaquePointer?, _ field: UInt8) -> String? {
         slopdesk_client_ctl_text(request, field, buffer.baseAddress, buffer.count, nil)
     }
     guard written == needed else { return "" }
-    // swiftlint:disable:next optional_data_string_conversion
     return String(decoding: out, as: UTF8.self)
 }
 
@@ -513,6 +512,5 @@ private func ffiText(_ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> Stri
         door(buffer.baseAddress, buffer.count)
     }
     guard written == needed else { return "" }
-    // swiftlint:disable:next optional_data_string_conversion
     return String(decoding: out, as: UTF8.self)
 }

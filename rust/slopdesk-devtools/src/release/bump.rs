@@ -352,6 +352,7 @@ pub fn apply(root: &Path, pin: &Pin, plan: &[Move]) -> Result<Vec<Entry>, String
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "a panic in a test is the failure report")]
     use super::{Kind, kind_of, next_version};
 
     #[test]

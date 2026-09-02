@@ -293,7 +293,6 @@ public struct PaneSpec: Sendable, Equatable {
             // Non-failable on purpose: the door slices a leaf out of a `str` it already validated,
             // so what comes back is UTF-8 by construction and a failable initialiser would only add
             // an arm no input can reach.
-            // swiftlint:disable:next optional_data_string_conversion
             return String(decoding: room, as: UTF8.self)
         }
     }
@@ -315,7 +314,6 @@ public struct PaneSpec: Sendable, Equatable {
                 slopdesk_ws_cwd_badge_path(input.baseAddress, input.count, out, cap)
             }
         }
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: answer, as: UTF8.self)
     }
 

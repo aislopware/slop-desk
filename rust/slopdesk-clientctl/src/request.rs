@@ -622,6 +622,11 @@ fn flag(value: Option<&Value>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::panic,
+        reason = "a panic in a test is the failure report, not a fault"
+    )]
+
     use slopdesk_agent::badge::TabBadge;
 
     use super::{DEFAULT_CAPTURE_LINES, Decoded, MAX_CAPTURE_LINES, MAX_REQUEST_BYTES, Op, Refusal, decode};

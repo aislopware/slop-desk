@@ -45,7 +45,6 @@ package enum SimulatorKeyMap {
         // The producer is `slopdesk_devicepanel::panel_key`, so these bytes are a Rust `&'static
         // str`'s and cannot be invalid UTF-8. A failable init would add a `nil` branch that means
         // "types text" here, which is a wrong answer rather than a cautious one.
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: out, as: UTF8.self)
     }
 

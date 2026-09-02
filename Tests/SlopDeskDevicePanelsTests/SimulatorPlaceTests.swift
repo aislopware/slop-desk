@@ -65,7 +65,6 @@ final class SimulatorPlaceTests: XCTestCase {
     /// header echoes cannot disagree. Asserted here as the bytes that cross rather than as a
     /// dictionary, because a dictionary is what the panel no longer builds.
     func testTheBodyUsesTheServersFieldNamesAndStopsAtSixDecimals() {
-        // swiftlint:disable:next optional_data_string_conversion
         let body = String(decoding: wsAnswerBytes { out, cap in
             slopdesk_sim_location_body(37.3348861234, -122.0089881234, out, cap)
         }, as: UTF8.self)

@@ -126,7 +126,6 @@ public enum ClipboardPasteMenu {
     private static func split(_ run: String) -> (label: String, isSecret: Bool) {
         let bytes = Array(run.utf8)
         guard let flag = bytes.first else { return ("", false) }
-        // swiftlint:disable:next optional_data_string_conversion
         return (String(decoding: bytes.dropFirst(), as: UTF8.self), flag == 1)
     }
 }

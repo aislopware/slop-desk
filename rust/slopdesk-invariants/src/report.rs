@@ -194,6 +194,11 @@ impl Report {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::indexing_slicing,
+        reason = "a test asserts by panicking, and a fixture it built itself is not a runtime input"
+    )]
+
     use std::collections::BTreeSet;
 
     use super::Report;
@@ -220,8 +225,9 @@ mod tests {
         let fixture = Fixture::new("report-corpus-names");
         fixture.write("Sources/A/A.swift", "// nothing under scripts\n");
 
+        let tree = fixture.tree();
         let mut report = Report::new();
-        let _ = report.corpus(&fixture.tree(), &["scripts", "golden"], &["sh", "py"]);
+        let _ignored = report.corpus(&tree, &["scripts", "golden"], &["sh", "py"]);
         let message = &report.violations()[0];
         assert!(message.contains("scripts, golden"), "{message}");
         assert!(message.contains(".sh/.py"), "{message}");

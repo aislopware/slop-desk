@@ -44,10 +44,12 @@ impl Trace {
     /// already injected, and the harness only ever sees the tail.
     #[must_use]
     pub fn out_of_order(&self) -> Option<u64> {
-        self.injected
-            .windows(2)
-            .find(|pair| pair[1] <= pair[0])
-            .map(|pair| pair[1])
+        self.injected.windows(2).find_map(|pair| {
+            match pair {
+                [earlier, later] if later <= earlier => Some(*later),
+                _ => None,
+            }
+        })
     }
 
     /// True when every press was released — the balance the ordered pump exists to keep.
@@ -90,6 +92,7 @@ pub fn scrape(log: &str) -> Trace {
 ///
 /// # Errors
 /// When the host binary is missing, the synclient build fails, or the gesture itself fails.
+#[expect(clippy::print_stdout, reason = "the injected order is this verb's report")]
 pub fn run(root: &Path, window: &str, args: &[String]) -> Result<(), String> {
     let host = crate::hostbin::binary_of(root, crate::hostbin::Daemon::Video, true);
     if !host.is_file() {
@@ -112,7 +115,7 @@ pub fn run(root: &Path, window: &str, args: &[String]) -> Result<(), String> {
     let environment = container(&state)?;
 
     let log = std::env::temp_dir().join("slopdesk-host.log");
-    let _ = Command::new("/usr/bin/pkill")
+    let _ignored = Command::new("/usr/bin/pkill")
         .args(["-f", "slopdesk-videohostd --window-id"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -162,9 +165,9 @@ pub fn run(root: &Path, window: &str, args: &[String]) -> Result<(), String> {
 
     let text = fs::read_to_string(&log).unwrap_or_default();
     let trace = scrape(&text);
-    let _ = child.kill();
-    let _ = child.wait();
-    let _ = fs::remove_dir_all(&state);
+    let _ignored = child.kill();
+    let _ignored = child.wait();
+    let _ignored = fs::remove_dir_all(&state);
 
     say("video-input", "=== INJECTED ORDER ===");
     let order: Vec<String> = trace.injected.iter().map(|index| format!("#{index}")).collect();

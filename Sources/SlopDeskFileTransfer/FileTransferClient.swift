@@ -157,6 +157,5 @@ private func said(_ text: UnsafePointer<UInt8>?, _ length: Int) -> String {
     // The producer is `slopdesk-dropd`'s own `String`, so these bytes cannot be invalid UTF-8. A
     // failable init would add a `nil` branch that means "the report said nothing", which the length
     // guard above already answers.
-    // swiftlint:disable:next optional_data_string_conversion
     return String(decoding: bytes, as: UTF8.self)
 }

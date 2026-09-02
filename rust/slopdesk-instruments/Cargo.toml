@@ -95,36 +95,67 @@ slopdesk-apple-nsapp = { path = "../slopdesk-apple-nsapp" }
 
 [lints.rust]
 unsafe_code = "forbid"
+
 missing_docs = "deny"
 missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
 unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
+
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+panic_in_result_fn = "deny"
 indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
 todo = "deny"
 unimplemented = "deny"
+unreachable = "deny"
 dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
 
 # Disabled, with reasons:
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
 #   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate". A throughput number folded
 #   with one rounding instead of two is not the number the Swift instrument printed, and the whole
 #   point of a bench is that today's number is comparable with the one in `docs/DECISIONS.md`.
-suboptimal_flops = "allow"
-imprecise_flops = "allow"
 # - `multiple_crate_versions` (cargo): both dependencies are path crates with no registry tree
 #   between them, so this can only ever fire on a toolchain artefact outside our control.
-multiple_crate_versions = "allow"
-
 # A bench reports throughput and a probe waits on a live daemon. Neither is startup-bound, and the
 # bench's number is only meaningful at the optimisation level the daemon it dials ships with.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

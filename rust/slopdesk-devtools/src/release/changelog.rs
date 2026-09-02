@@ -46,7 +46,7 @@ pub fn section(changelog: &str, version: &str) -> Option<String> {
     let body: Vec<&str> = lines.take_while(|line| !line.starts_with("## ")).collect();
     let first = body.iter().position(|line| !line.trim().is_empty())?;
     let last = body.iter().rposition(|line| !line.trim().is_empty())?;
-    Some(body[first..=last].join("\n"))
+    body.get(first..=last).map(|lines| lines.join("\n"))
 }
 
 /// Rewrite `CHANGELOG.md` from the commit log, passing `arguments` straight to git-cliff.

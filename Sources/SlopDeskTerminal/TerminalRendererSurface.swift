@@ -524,7 +524,6 @@ final class TerminalRendererSurface {
         let bytes = answer { out, cap in
             slopdesk_term_surface_selection_text(handle, format.rawValue, out, cap)
         }
-        // swiftlint:disable:next optional_data_string_conversion
         return bytes.isEmpty ? nil : String(decoding: bytes, as: UTF8.self)
     }
 
@@ -556,7 +555,6 @@ final class TerminalRendererSurface {
                 // of an empty viewport that reads as a blank terminal.
                 return rows
             }
-            // swiftlint:disable:next optional_data_string_conversion
             rows.append(String(decoding: run, as: UTF8.self))
         }
         return rows
@@ -709,7 +707,6 @@ final class TerminalRendererSurface {
         let bytes = answer { out, cap in
             slopdesk_term_surface_screen_row(handle, Self.row(row), out, cap)
         }
-        // swiftlint:disable:next optional_data_string_conversion
         return bytes.isEmpty ? nil : String(decoding: bytes, as: UTF8.self)
     }
 
@@ -757,7 +754,6 @@ final class TerminalRendererSurface {
                 return lines
             }
             lines.append(TerminalScrollbackLine(
-                // swiftlint:disable:next optional_data_string_conversion
                 text: String(decoding: run, as: UTF8.self),
                 firstRow: Int(first),
                 lastRow: Int(last),
@@ -1041,7 +1037,6 @@ final class TerminalRendererSurface {
         let bytes = answer { out, cap in
             slopdesk_term_surface_block_text(handle, index, out, cap)
         }
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: bytes, as: UTF8.self)
     }
 
@@ -1055,7 +1050,6 @@ final class TerminalRendererSurface {
         let bytes = answer { out, cap in
             slopdesk_term_surface_hyperlink_at(handle, UInt16(clamping: column), UInt16(clamping: row), out, cap)
         }
-        // swiftlint:disable:next optional_data_string_conversion
         return bytes.isEmpty ? nil : String(decoding: bytes, as: UTF8.self)
     }
 
@@ -1245,7 +1239,6 @@ private extension ArraySlice<UInt8> {
     /// together is what keeps a caller from advancing past one and not the other.
     mutating func takeText() -> String? {
         guard let length = takeBigEndianUInt32(), let run = take(Int(length)) else { return nil }
-        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: run, as: UTF8.self)
     }
 

@@ -45,6 +45,12 @@
 //! `golden/golden_vectors.json`, which drops the frozen keys the minter cannot produce. A NEW
 //! vector key must also be added to [`EMITTED_KEYS`], or this gate fails by design.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the PASS and FAIL lines are this gate's report"
+)]
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -232,7 +238,7 @@ pub fn verdict(corpus_json: &str, regenerated_json: &str) -> Result<(usize, Vec<
         .collect();
     let diverged: Vec<&&String> = diffed
         .iter()
-        .filter(|key| canonical(&corpus[key.as_str()]) != canonical(&regenerated[key.as_str()]))
+        .filter(|key| corpus.get(key.as_str()).map(canonical) != regenerated.get(key.as_str()).map(canonical))
         .collect();
     if !diverged.is_empty() {
         failures.push(format!(
@@ -460,6 +466,7 @@ fn collect(dir: &Path, into: &mut Vec<std::path::PathBuf>) -> Result<(), String>
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "a panic in a test is the failure report")]
     use std::fs;
 
     use super::{EMITTED_KEYS, FROZEN_KEYS, canonical, keys_of, verdict};

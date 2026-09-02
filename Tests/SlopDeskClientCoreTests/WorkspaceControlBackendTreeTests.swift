@@ -327,7 +327,6 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
     private func awaitShimCommand(_ store: WorkspaceStore, _ leaf: PaneID) async throws -> String {
         for _ in 0..<100 {
             if let handle = store.handle(for: leaf) as? RecordingPaneSession, let bytes = handle.sentBytes.first {
-                // swiftlint:disable:next optional_data_string_conversion
                 return String(decoding: bytes, as: UTF8.self)
             }
             try await Task.sleep(for: .milliseconds(10))

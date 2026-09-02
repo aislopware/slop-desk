@@ -57,13 +57,11 @@ pub fn every_source_directory_is_a_target(tree: &Tree) -> Report {
         }
     }
     if !undeclared.is_empty() {
-        for site in &undeclared {
-            eprintln!("{site}");
-        }
-        report.fail(
+        report.fail(format!(
             "a directory under Tests/ or Sources/ has no target in Package.swift — SwiftPM ignores it \
-             silently",
-        );
+             silently: {}",
+            undeclared.join(", ")
+        ));
     }
     report
 }
@@ -145,8 +143,9 @@ pub fn producers(tree: &Tree, artifact: &str) -> BTreeSet<String> {
                 if !line.starts_with('#') {
                     return None;
                 }
-                lines[index + 1..]
+                lines
                     .iter()
+                    .skip(index + 1)
                     .find(|below| !below.starts_with('#'))
                     .and_then(|below| recipe_name(below))
             });
@@ -233,21 +232,147 @@ pub fn every_linked_artifact_is_built_by_the_release(tree: &Tree) -> Report {
         }
     }
     if !unbuilt.is_empty() {
-        for (artifact, why) in &unbuilt {
-            eprintln!("{artifact} ({why})");
-        }
+        let listed: Vec<String> = unbuilt
+            .iter()
+            .map(|(artifact, why)| format!("{artifact} ({why})"))
+            .collect();
         report.fail(format!(
             "a linked binaryTarget is never built by {RELEASE_WORKFLOW} — SwiftPM cannot resolve the graph \
-             on a fresh runner (docs/49)"
+             on a fresh runner (docs/49): {}",
+            listed.join(", ")
         ));
     }
     report
 }
 
+/// Every `CSlopDeskFFI` dependent carries `linkerSettings: ffiCLibraries`.
+///
+/// `docs/55` §4: the Rust staticlib is ONE object, so any target that calls any `slopdesk_*` door
+/// pulls libgit2's members in and needs `iconv`, `Security` and `CoreFoundation` at link time.
+/// `Package.swift` spells those once as `ffiCLibraries`, and the promise beside it is that every
+/// dependent repeats the name. A dependent that forgets it links today only because SOME other
+/// target in the same executable's graph remembered — and fails, with an undefined-symbol list
+/// naming nothing it wrote, on the first product that links it alone.
+///
+/// The manifest is Swift, not a table, so this reads it the way a reader does: one block per
+/// `.target(`/`.testTarget(`/`.executableTarget(`, ending where the next begins. A block whose
+/// `dependencies:` list quotes `"CSlopDeskFFI"` must also say `linkerSettings: ffiCLibraries`.
+/// The list is FLOORED — a manifest with no dependent at all is a renamed module, not a pass.
+#[must_use]
+pub fn every_ffi_dependent_links_the_frameworks(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let Some(manifest) = report.source(tree, "Package.swift", "it declares every FFI dependent") else {
+        return report;
+    };
+    report.fail_if(
+        !manifest.text.contains("let ffiCLibraries: [LinkerSetting]"),
+        "Package.swift no longer defines `ffiCLibraries` — the one spelling of the FFI link line (docs/55 \
+         §4)",
+    );
+
+    let mut dependents = 0_usize;
+    let mut forgot: Vec<String> = Vec::new();
+    for block in target_blocks(&manifest.text) {
+        let Some(name) = text::capture_first(block, r#"name:\s*"([A-Za-z0-9_]+)""#) else {
+            continue;
+        };
+        let dependencies = text::capture_first(block, r"(?s)dependencies:\s*\[(.*?)\]").unwrap_or_default();
+        if !dependencies.contains("\"CSlopDeskFFI\"") {
+            continue;
+        }
+        dependents += 1;
+        if !block.contains("linkerSettings: ffiCLibraries") {
+            forgot.push(name);
+        }
+    }
+    report.fail_if(
+        dependents == 0,
+        "no target in Package.swift depends on CSlopDeskFFI — the rule would pass on a renamed module \
+         (docs/55 §4b)",
+    );
+    report.fail_if(
+        !forgot.is_empty(),
+        format!(
+            "a CSlopDeskFFI dependent does not carry `linkerSettings: ffiCLibraries` ({}) — it links today \
+             on another target's flags and fails alone (docs/55 §4b)",
+            forgot.join(", ")
+        ),
+    );
+    report
+}
+
+/// The manifest split at each target DECLARATION; the text before the first is dropped.
+///
+/// `SwiftPM` spells a dependency the same way it spells a declaration — `.target(name: "X")` is
+/// legal inside a `dependencies: [` list, and this manifest uses that form. A splitter that cut at
+/// every `.target(` would end a declaration mid-list, lose its `dependencies:` to the regex, and
+/// read the dependent as a non-dependent. So a `.target(` is a declaration only when it does not
+/// sit inside a `dependencies:` list, which the scan tracks by bracket depth; `//` comments and
+/// string literals are skipped so a parenthesis in prose, or the `//` of a package URL, cannot
+/// unbalance the count.
+fn target_blocks(manifest: &str) -> Vec<&str> {
+    const OPENERS: [&str; 4] = [".target(", ".testTarget(", ".executableTarget(", ".binaryTarget("];
+    let bytes = manifest.as_bytes();
+    let mut starts: Vec<usize> = Vec::new();
+    // One entry per open bracket: whether it opened a `dependencies:` list.
+    let mut stack: Vec<bool> = Vec::new();
+    let mut in_dependencies = 0_usize;
+    let mut index = 0_usize;
+    while index < bytes.len() {
+        let rest = manifest.get(index..).unwrap_or_default();
+        if rest.starts_with("//") {
+            index += rest.find('\n').unwrap_or(rest.len());
+            continue;
+        }
+        if rest.starts_with('"') {
+            // A string literal: a package URL holds `//`, and a flag may hold a bracket. Skip to
+            // its close, honouring a backslash escape.
+            let mut close = 1_usize;
+            while let Some(byte) = rest.as_bytes().get(close) {
+                match byte {
+                    b'\\' => close += 2,
+                    b'"' => break,
+                    _ => close += 1,
+                }
+            }
+            index += close.saturating_add(1).min(rest.len());
+            continue;
+        }
+        if in_dependencies == 0 && OPENERS.iter().any(|opener| rest.starts_with(opener)) {
+            starts.push(index);
+        }
+        match bytes.get(index) {
+            Some(b'[') => {
+                let opens_dependencies = manifest
+                    .get(..index)
+                    .is_some_and(|before| before.trim_end().ends_with("dependencies:"));
+                stack.push(opens_dependencies);
+                in_dependencies += usize::from(opens_dependencies);
+            },
+            Some(b'(') => stack.push(false),
+            Some(b']' | b')') => {
+                let closed_dependencies = stack.pop() == Some(true);
+                in_dependencies = in_dependencies.saturating_sub(usize::from(closed_dependencies));
+            },
+            _ => {},
+        }
+        index += 1;
+    }
+    starts
+        .iter()
+        .enumerate()
+        .filter_map(|(position, &start)| {
+            let end = starts.get(position + 1).copied().unwrap_or(manifest.len());
+            manifest.get(start..end)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        every_linked_artifact_is_built_by_the_release, every_source_directory_is_a_target, producers,
+        every_ffi_dependent_links_the_frameworks, every_linked_artifact_is_built_by_the_release,
+        every_source_directory_is_a_target, producers,
     };
     use crate::tests::Fixture;
 
@@ -356,5 +481,76 @@ mod tests {
             "jobs:\n  build:\n    run: swift build\n",
         );
         assert!(!every_linked_artifact_is_built_by_the_release(&fixture.tree()).is_clean());
+    }
+
+    const FFI_MANIFEST: &str =
+        "let ffiCLibraries: [LinkerSetting] = [.linkedLibrary(\"iconv\")]\n.target(name: \"Core\", \
+         dependencies: [\"Wire\", \"CSlopDeskFFI\"], linkerSettings: ffiCLibraries),\n.target(name: \
+         \"Wire\", dependencies: [\"Other\"]),\n.binaryTarget(name: \"CSlopDeskFFI\", path: \
+         \"ThirdParty/x.xcframework\"),\n";
+
+    #[test]
+    fn every_dependent_carrying_the_link_line_is_clean() {
+        let fixture = Fixture::new("ffi-link-clean");
+        fixture.write("Package.swift", FFI_MANIFEST);
+        assert!(every_ffi_dependent_links_the_frameworks(&fixture.tree()).is_clean());
+    }
+
+    #[test]
+    fn a_dependent_that_forgot_the_link_line_is_red() {
+        let fixture = Fixture::new("ffi-link-forgot");
+        fixture.write(
+            "Package.swift",
+            &FFI_MANIFEST.replace(", linkerSettings: ffiCLibraries", ""),
+        );
+        let violations = every_ffi_dependent_links_the_frameworks(&fixture.tree())
+            .violations()
+            .to_vec();
+        assert!(violations.iter().any(|v| v.contains("Core")), "{violations:?}");
+    }
+
+    /// A one-line target with the dependency last in its list is the shape `SlopDeskClient` had
+    /// when it was found without the line — the block must reach past the `]`.
+    #[test]
+    fn a_dependent_whose_dependency_is_last_still_needs_the_line() {
+        let fixture = Fixture::new("ffi-link-last");
+        fixture.write(
+            "Package.swift",
+            "let ffiCLibraries: [LinkerSetting] = []\n.target(name: \"Client\", dependencies: [\"Wire\", \
+             \"CSlopDeskFFI\"]),\n.target(name: \"Wire\"),\n",
+        );
+        assert!(!every_ffi_dependent_links_the_frameworks(&fixture.tree()).is_clean());
+    }
+
+    /// `.target(name: "X")` is ALSO how a dependency is spelled, and this manifest uses that form
+    /// inside `dependencies:` lists. A splitter that cut there would end `Core`'s block before its
+    /// dependency list closed and read it as a non-dependent.
+    #[test]
+    fn a_dependency_spelled_as_target_does_not_split_the_declaration() {
+        let fixture = Fixture::new("ffi-link-dependency-form");
+        fixture.write(
+            "Package.swift",
+            "let ffiCLibraries: [LinkerSetting] = [] // (flags)\n.package(url: \"https://example.invalid/x.git\", \
+             from: \"1.0.0\"),\n.target(\nname: \"Core\",\ndependencies: \
+             [\n.target(name: \"Arena\"),\n\"CSlopDeskFFI\",\n],\n),\n.target(name: \"Arena\"),\n",
+        );
+        let violations = every_ffi_dependent_links_the_frameworks(&fixture.tree())
+            .violations()
+            .to_vec();
+        assert!(violations.iter().any(|v| v.contains("Core")), "{violations:?}");
+        assert!(
+            !violations.iter().any(|v| v.contains("no target")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_manifest_with_no_dependent_at_all_is_red() {
+        let fixture = Fixture::new("ffi-link-none");
+        fixture.write(
+            "Package.swift",
+            "let ffiCLibraries: [LinkerSetting] = []\n.target(name: \"Wire\", dependencies: [\"Other\"]),\n",
+        );
+        assert!(!every_ffi_dependent_links_the_frameworks(&fixture.tree()).is_clean());
     }
 }

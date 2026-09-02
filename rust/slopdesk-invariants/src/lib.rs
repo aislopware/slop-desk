@@ -30,6 +30,7 @@ pub use report::Report;
 pub use tree::{Source, Tree};
 
 /// One named invariant.
+#[derive(Clone, Copy, Debug)]
 pub struct Rule {
     /// What the rule is called on the command line and in `--only`.
     pub name: &'static str,
@@ -84,26 +85,35 @@ pub(crate) mod tests {
     //! and a rule about superd's bodies want the same two files present, and a second copy of this
     //! helper is a second set of paths to keep in step with the real tree.
 
+    // `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+    // `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's
+    // own, recorded in its documentation; the stricter of the two wins.
+    #![expect(
+        clippy::redundant_pub_crate,
+        reason = "conflicts with the denied `unreachable_pub`"
+    )]
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
+
     use std::fs;
     use std::path::PathBuf;
 
     use crate::tree::Tree;
 
     /// A temp directory that removes itself, written into as if it were the repository.
-    pub struct Fixture(PathBuf);
+    pub(crate) struct Fixture(PathBuf);
 
     impl Fixture {
         /// A fresh, empty tree. `name` must be unique per test — they run concurrently.
         #[must_use]
-        pub fn new(name: &str) -> Self {
+        pub(crate) fn new(name: &str) -> Self {
             let root = std::env::temp_dir().join(format!("slopdesk-invariants-{name}"));
-            let _ = fs::remove_dir_all(&root);
+            let _ignored = fs::remove_dir_all(&root);
             fs::create_dir_all(&root).expect("fixture root");
             Self(root)
         }
 
         /// Writes one file, creating its parents. Returns `self` so writes chain.
-        pub fn write(&self, path: &str, contents: &str) -> &Self {
+        pub(crate) fn write(&self, path: &str, contents: &str) -> &Self {
             let full = self.0.join(path);
             fs::create_dir_all(full.parent().expect("fixture parent")).expect("fixture dirs");
             fs::write(full, contents).expect("fixture file");
@@ -115,7 +125,7 @@ pub(crate) mod tests {
         /// A break-test for a BAN needs the offending line to arrive in a file that still passes
         /// everything else — a `write` would take the doors out with it, and the rule would then
         /// fail for the reason the test was not asking about.
-        pub fn append(&self, path: &str, contents: &str) -> &Self {
+        pub(crate) fn append(&self, path: &str, contents: &str) -> &Self {
             let full = self.0.join(path);
             let mut held = fs::read_to_string(&full).unwrap_or_default();
             held.push_str(contents);
@@ -124,8 +134,8 @@ pub(crate) mod tests {
 
         /// Takes a file back out, so a break-test for an ABSENT claim can seed the file and then
         /// restore the tree that satisfied the rule.
-        pub fn remove(&self, path: &str) -> &Self {
-            let _ = fs::remove_file(self.0.join(path));
+        pub(crate) fn remove(&self, path: &str) -> &Self {
+            let _ignored = fs::remove_file(self.0.join(path));
             self
         }
 
@@ -137,24 +147,24 @@ pub(crate) mod tests {
         /// would be green on a link no clone could resolve. Any existing entry is taken out first:
         /// the drift these tests seed is a link REPLACED by a copy, so the two directions have to
         /// be writable over each other.
-        pub fn link(&self, path: &str, target: &str) -> &Self {
+        pub(crate) fn link(&self, path: &str, target: &str) -> &Self {
             let full = self.0.join(path);
             fs::create_dir_all(full.parent().expect("fixture parent")).expect("fixture dirs");
-            let _ = fs::remove_file(&full);
+            let _ignored = fs::remove_file(&full);
             std::os::unix::fs::symlink(target, &full).expect("fixture link");
             self
         }
 
         /// Indexes what has been written so far.
         #[must_use]
-        pub fn tree(&self) -> Tree {
+        pub(crate) fn tree(&self) -> Tree {
             Tree::load(&self.0).expect("fixture tree")
         }
     }
 
     impl Drop for Fixture {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            let _ignored = fs::remove_dir_all(&self.0);
         }
     }
 }

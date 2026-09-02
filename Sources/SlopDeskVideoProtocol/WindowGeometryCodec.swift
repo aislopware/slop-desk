@@ -85,7 +85,6 @@ public enum WindowGeometryMessage: Equatable, Sendable {
         default:
             // The title arm: its bytes stay in the caller's datagram, and the decode above proved
             // every one of them is UTF-8 before it reported where they start.
-            // swiftlint:disable:next optional_data_string_conversion
             return .title(String(decoding: data.dropFirst(Int(flat.title_offset)), as: UTF8.self))
         }
     }

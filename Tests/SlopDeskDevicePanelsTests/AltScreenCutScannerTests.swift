@@ -9,7 +9,6 @@ final class AltScreenCutScannerTests: XCTestCase {
         AltScreenCutScanner.reopenSequence(
             afterDropped: Data(dropped.utf8), keptHead: Data(kept.utf8),
         ).map {
-            // swiftlint:disable:next optional_data_string_conversion
             String(decoding: $0, as: UTF8.self)
         }
     }

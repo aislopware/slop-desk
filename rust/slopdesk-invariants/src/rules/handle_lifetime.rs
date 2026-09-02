@@ -62,7 +62,7 @@ enum Proof {
 
 /// Every file that frees a handle outside `deinit`, and the proof it stands on. Kept sorted by
 /// path.
-const BOOKED: &[(&str, Proof)] = &[
+const BOOKED: [(&str, Proof); 4] = [
     (
         "Sources/SlopDeskClientCore/Control/ClientControlHost.swift",
         Proof::SingleToucher,
@@ -212,7 +212,7 @@ mod tests {
     /// Every booked path, because the rule checks both directions and a fixture missing one would
     /// fail on the entry rather than on the drift the test is seeding.
     fn booked(fixture: &Fixture) -> &Fixture {
-        for &(path, _) in super::BOOKED {
+        for &(path, _) in &super::BOOKED {
             fixture.write(
                 path,
                 "import CSlopDeskFFI\nfunc end() { slopdesk_thing_free(handle) }\n",

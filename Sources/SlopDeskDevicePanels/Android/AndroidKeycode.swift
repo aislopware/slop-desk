@@ -166,7 +166,6 @@ package enum AndroidKeyMap {
             // The producer is `slopdesk_devicepanel::panel_key`, so the payload is a Rust `String`'s
             // bytes and cannot be invalid UTF-8. A failable init would add a `nil` branch with no
             // failure mode behind it, and this side would have to invent a meaning for it.
-            // swiftlint:disable:next optional_data_string_conversion
             return .text(String(decoding: payload, as: UTF8.self))
         default:
             return .none

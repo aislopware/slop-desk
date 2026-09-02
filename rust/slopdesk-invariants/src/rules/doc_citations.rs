@@ -274,13 +274,11 @@ pub fn every_docc_link_resolves(tree: &Tree) -> Report {
         }
     }
     if !dangling.is_empty() {
-        for site in &dangling {
-            eprintln!("{site}");
-        }
-        report.fail(
+        report.fail(format!(
             "a ``link`` names a symbol this repo does not declare — cite a ported item as `name` + crate \
-             path",
-        );
+             path: {}",
+            dangling.join(", ")
+        ));
     }
     report
 }
@@ -343,10 +341,10 @@ pub fn the_read_first_table_resolves(tree: &Tree) -> Report {
     let mut report = Report::new();
     let (live, unresolved) = read_first_docs(tree);
     if !unresolved.is_empty() {
-        for token in &unresolved {
-            eprintln!("{token}");
-        }
-        report.fail("CLAUDE.md's read-first table names a doc that does not exist");
+        report.fail(format!(
+            "CLAUDE.md's read-first table names a doc that does not exist: {}",
+            unresolved.join(", ")
+        ));
     }
     if live.is_empty() {
         report.fail(
@@ -400,12 +398,15 @@ pub fn every_cited_path_exists(tree: &Tree) -> Report {
         .filter(|path| !PATH_TOMBSTONES.contains(&path.as_str()))
         .collect();
     if !missing.is_empty() {
-        for path in &missing {
-            eprintln!("{path}");
-        }
-        report.fail(
-            "a read-first doc cites a file that does not exist — repoint it, or add it to PATH_TOMBSTONES",
-        );
+        report.fail(format!(
+            "a read-first doc cites a file that does not exist — repoint it, or add it to PATH_TOMBSTONES: \
+             {}",
+            missing
+                .iter()
+                .map(|path| path.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
     report
 }
@@ -542,7 +543,7 @@ fn cited_sections(origin: &str) -> Vec<(String, String)> {
             continue;
         }
         index += 1;
-        while index < origin.len() && (bytes[index] & 0xC0) == 0x80 {
+        while bytes.get(index).is_some_and(|byte| (byte & 0xC0) == 0x80) {
             index += 1;
         }
     }
@@ -750,6 +751,11 @@ pub(super) fn top_level_directories(tree: &Tree) -> Option<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::indexing_slicing,
+        reason = "a test asserts by panicking, and a fixture it built itself is not a runtime input"
+    )]
+
     use super::{
         cited_paths, cited_sections, cited_symbols, every_cited_path_exists, every_cited_section_exists,
         every_docc_link_resolves, marks_section, section_markers, the_read_first_table_resolves,

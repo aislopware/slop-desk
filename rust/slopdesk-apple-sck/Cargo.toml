@@ -197,7 +197,6 @@ try_err = "deny"
 # `redundant_pub_crate` stays DENIED here: the five modules it fires in — `config`, `filter`, `frame`,
 # `handoff`, `tap` — each carry the conflict with the denied `unreachable_pub` and the `#![expect]`
 # that resolves it, at the site.
-
 # Disabled, with a reason — the same two every workspace disables, for the same two reasons.
 multiple_crate_versions = "allow"
 suboptimal_flops = "allow"

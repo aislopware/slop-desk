@@ -55,7 +55,6 @@ path = "src/lib.rs"
 # documented as explicitly NOT policy, so a caret range would let a routine `cargo update` raise the
 # toolchain floor of a repository that builds three slices in CI.
 [dependencies]
-objc2 = { version = "=0.6.4", default-features = false, features = ["std"] }
 objc2-audio-toolbox = { version = "=0.3.2", default-features = false, features = [
   "std",
   "objc2-core-audio-types",
@@ -109,6 +108,7 @@ unused_import_braces = "deny"
 unused_lifetimes = "deny"
 unused_macro_rules = "deny"
 single_use_lifetimes = "deny"
+trivial_casts = "deny"
 trivial_numeric_casts = "deny"
 variant_size_differences = "deny"
 elided_lifetimes_in_paths = "deny"
@@ -150,7 +150,6 @@ try_err = "deny"
 # the conflict with the denied `unreachable_pub` and the `#![expect]` that resolves it, at the site.
 # The old crate-wide allow named `sample`, a module the lint does not fire in at all — which is the
 # whole argument for keeping the exemption where it can be checked.
-
 # Disabled, with a reason — the same two every workspace disables, for the same two reasons.
 multiple_crate_versions = "allow"
 suboptimal_flops = "allow"

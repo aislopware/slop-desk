@@ -66,10 +66,6 @@ strip = "debuginfo"
 # forces. A literal copy rather than inherited, because inheriting would mean being a member,
 # which is the thing the profile forbids.
 [lints.rust]
-# `forbid`, not `deny` (stage 28): this crate has never contained an `unsafe` block, and `forbid`
-# is what turns that from a fact about today's code into one no downstream `allow` can undo. Every
-# syscall with no safe wrapper lives in `slopdesk-posix`; if this daemon ever needs one, it depends
-# on that crate rather than lifting the lint here.
 unsafe_code = "forbid"
 
 missing_docs = "deny"
@@ -101,6 +97,7 @@ unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 panic_in_result_fn = "deny"
+indexing_slicing = "deny"
 integer_division = "deny"
 exit = "deny"
 todo = "deny"
@@ -108,6 +105,7 @@ unimplemented = "deny"
 unreachable = "deny"
 dbg_macro = "deny"
 print_stdout = "deny"
+print_stderr = "deny"
 mem_forget = "deny"
 rest_pat_in_fully_bound_structs = "deny"
 verbose_file_reads = "deny"
@@ -117,6 +115,10 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
+# `forbid`, not `deny` (stage 28): this crate has never contained an `unsafe` block, and `forbid`
+# is what turns that from a fact about today's code into one no downstream `allow` can undo. Every
+# syscall with no safe wrapper lives in `slopdesk-posix`; if this daemon ever needs one, it depends
+# on that crate rather than lifting the lint here.
 # Both of these were crate-wide allows, and both were wider than the fact behind them. They are
 # denied here now and exempted file by file, each `#![expect]` carrying the reason that is true of
 # THAT file:
@@ -126,16 +128,14 @@ try_err = "deny"
 #   where a panic is the failure report.
 # - `print_stderr`: stderr IS screend's log, exactly as it is superd's — launchd/hostd captures it.
 #   True of `server` and one line of `detect`; the model, the renderer and the rules stay printless.
-indexing_slicing = "deny"
-print_stderr = "deny"
 # Disabled, with reasons:
 # - `multiple_crate_versions` (cargo): a duplicate deep in serde's tree is not ours to resolve.
-multiple_crate_versions = "allow"
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
 #   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
 #   FMA rounds once where the wire rounds twice, so taking the advice changes the `f64` bit patterns
 #   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
 #   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
 #   here would be obeyed before anyone reads this file.
+multiple_crate_versions = "allow"
 suboptimal_flops = "allow"
 imprecise_flops = "allow"

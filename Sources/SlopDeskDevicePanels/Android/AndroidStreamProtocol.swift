@@ -125,7 +125,6 @@ package final class AndroidStreamParser {
             // Non-failable on purpose: the door proved the four bytes are UTF-8 before it read them
             // as a name, and a stream whose id is not decodes as corrupt rather than as an empty
             // string.
-            // swiftlint:disable:next optional_data_string_conversion
             return .codec(String(decoding: payload, as: UTF8.self))
         case SLOPDESK_ANDROID_STREAM_KIND_SESSION:
             return .session(width: Int(record.width), height: Int(record.height))

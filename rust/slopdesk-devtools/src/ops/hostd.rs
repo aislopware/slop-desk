@@ -370,7 +370,7 @@ pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
         if let (true, Some(found)) = (alive, record.as_ref()) {
             stopped_at = Some(Instant::now());
             say("host-restart", &format!("SIGTERM → pid {}", found.pid));
-            let _ = proc::ask("/bin/kill", &["-TERM", &found.pid.to_string()], Path::new("/"));
+            let _ignored = proc::ask("/bin/kill", &["-TERM", &found.pid.to_string()], Path::new("/"));
             if !until(Duration::from_secs(20), || !pid_exists(found.pid)) {
                 return Err(format!(
                     "pid {} did not exit within 20s of SIGTERM — investigate rather than forcing it; a \

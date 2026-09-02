@@ -4,6 +4,12 @@
 //! with tests beside it. Every verb resolves the repo root the same way and prints its own failure;
 //! nothing here decides anything.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the verdict and the usage are this binary's whole output"
+)]
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -53,11 +59,10 @@ fn main() -> ExitCode {
         },
     };
 
-    let Some(verb) = arguments.first().cloned() else {
+    let Some((verb, rest)) = arguments.split_first() else {
         eprint!("{USAGE}");
         return ExitCode::from(2);
     };
-    let rest = &arguments[1..];
 
     match verb.as_str() {
         "test-touched" => test_touched(&root, rest),
@@ -130,8 +135,8 @@ fn ffi_gate(root: &Path, arguments: &[String]) -> ExitCode {
 fn ios_tests(root: &Path, arguments: &[String]) -> ExitCode {
     let mut request = xcode::SimulatorRequest::default();
     let mut index = 0;
-    while index < arguments.len() {
-        match arguments[index].as_str() {
+    while let Some(argument) = arguments.get(index) {
+        match argument.as_str() {
             "--device" => {
                 let Some(name) = arguments.get(index + 1) else {
                     eprintln!("slopdesk-gate: --device needs a name");

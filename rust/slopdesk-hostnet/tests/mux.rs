@@ -13,6 +13,7 @@
     clippy::expect_used,
     clippy::panic,
     clippy::unwrap_used,
+    clippy::indexing_slicing,
     reason = "a panic in a test is the failure report, not a fault"
 )]
 

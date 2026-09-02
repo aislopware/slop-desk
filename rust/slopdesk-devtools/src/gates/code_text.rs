@@ -42,6 +42,8 @@
 //! still raw, so "raw" cannot be inferred from the hash count the way Swift allows. `r"a\"b"` is
 //! the input that decides it: read as escaped, the literal never closes where it really does.
 
+#![expect(clippy::indexing_slicing, reason = "the loop head bounds every cursor read")]
+
 use std::path::Path;
 
 /// The comment and literal rules of one source language.
@@ -436,6 +438,7 @@ const fn char_literal_end(text: &[u8], at: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::unwrap_used, reason = "a panic in a test is the failure report")]
     use std::path::Path;
 
     use super::{Dialect, code_only};

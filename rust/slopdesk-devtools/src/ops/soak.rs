@@ -35,6 +35,11 @@
 //! It closes when this process exits for ANY reason, which is strictly more than a trap covers: a
 //! bash EXIT trap does not run under an untrapped signal, and no trap at all runs under `SIGKILL`.
 
+#![expect(
+    clippy::print_stdout,
+    reason = "the ok and FAIL lines and the host log are the soak's report"
+)]
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -60,6 +65,7 @@ const BOUND_LINES: u64 = 600_000;
 /// P2 wants ~4× the threshold, so eviction is reached with margin rather than by a lucky rounding.
 /// P1 wants comfortably UNDER it, so it exercises retention and not eviction.
 #[must_use]
+#[expect(clippy::integer_division, reason = "the floor is the bound being computed")]
 pub const fn lines_for(threshold: u64) -> (u64, u64) {
     ((threshold / 4) / LINE_BYTES, (threshold * 4) / LINE_BYTES)
 }
@@ -151,7 +157,7 @@ pub fn generator(prefix: &str, first: u64, count: u64) -> String {
 /// it is what makes a subscriber slow the way a backgrounded phone is slow, stopping its reads and
 /// its acks at the same instant, rather than the way a `sleep` in a test double is slow.
 fn signal(name: &str, pid: u32) {
-    let _ = Command::new("/bin/kill")
+    let _ignored = Command::new("/bin/kill")
         .args([name, &pid.to_string()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -233,7 +239,7 @@ struct Reaper {
 impl Drop for Reaper {
     fn drop(&mut self) {
         // Closing the pipe is the signal; the child does the rest, including after a SIGKILL here.
-        let _ = self.child.wait();
+        let _ignored = self.child.wait();
     }
 }
 
@@ -351,7 +357,7 @@ pub fn run(root: &Path, threshold: u64) -> Result<u32, String> {
     let (hold_lines, evict_lines) = lines_for(threshold);
 
     let work = std::env::temp_dir().join(format!("slopdesk-soak.{}", std::process::id()));
-    let _ = fs::remove_dir_all(&work);
+    let _ignored = fs::remove_dir_all(&work);
     let state = work.join("state");
     let environment = container(&state)?;
     fs::create_dir_all(work.join("home")).map_err(|error| format!("{}: {error}", work.display()))?;
@@ -415,7 +421,7 @@ pub fn run(root: &Path, threshold: u64) -> Result<u32, String> {
 
     // ───────────────────────────────────────────── P1 / P2 / P3: the shared pane
 
-    let shared = proc::capture("uuidgen", &[] as &[&str], root)?;
+    let shared = proc::capture::<&str>("uuidgen", &[], root)?;
     let mut fast = soak.start_client("fast", &shared)?;
     thread::sleep(Duration::from_secs(2));
     let slow = soak.start_client("slow", &shared)?;
@@ -492,8 +498,8 @@ pub fn run(root: &Path, threshold: u64) -> Result<u32, String> {
     // ───────────────────────────────────────── P4: the producer bound after a shrink
 
     println!("-- P4 producer bound: a pane that shrank back to one member still backpressures the PTY");
-    let control = proc::capture("uuidgen", &[] as &[&str], root)?;
-    let test = proc::capture("uuidgen", &[] as &[&str], root)?;
+    let control = proc::capture::<&str>("uuidgen", &[], root)?;
+    let test = proc::capture::<&str>("uuidgen", &[], root)?;
     let mut c1 = soak.start_client("c1", &control)?;
     thread::sleep(Duration::from_secs(2));
     let mut t1 = soak.start_client("t1", &test)?;
@@ -564,11 +570,11 @@ pub fn run(root: &Path, threshold: u64) -> Result<u32, String> {
         signal("-CONT", member.pid);
     }
     for mut member in [c1, t1, t2, fast, slow] {
-        let _ = member.child.kill();
-        let _ = member.child.wait();
+        let _ignored = member.child.kill();
+        let _ignored = member.child.wait();
     }
-    let _ = soak.hostd.kill();
-    let _ = soak.hostd.wait();
+    let _ignored = soak.hostd.kill();
+    let _ignored = soak.hostd.wait();
     Ok(soak.failures)
 }
 
@@ -605,7 +611,7 @@ pub fn reap(pidfile: &Path, work: &Path) -> Result<(), String> {
     use std::io::Read;
 
     let mut sink = Vec::new();
-    let _ = std::io::stdin().read_to_end(&mut sink);
+    let _ignored = std::io::stdin().read_to_end(&mut sink);
 
     let pids: Vec<u32> = fs::read_to_string(pidfile)
         .unwrap_or_default()
@@ -620,12 +626,13 @@ pub fn reap(pidfile: &Path, work: &Path) -> Result<(), String> {
     for pid in &pids {
         signal("-KILL", *pid);
     }
-    let _ = fs::remove_dir_all(work);
+    let _ignored = fs::remove_dir_all(work);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     use std::fmt::Write as _;
 
     /// A capture of `count` numbered lines, the way a client's stdout holds them.

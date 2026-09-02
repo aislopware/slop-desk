@@ -308,7 +308,7 @@ const PHONE_DOORS: &[&str] = &[
 const CONNECT_FACE: &str = "Sources/SlopDeskWorkspaceCore/Connection/ConnectRun.swift";
 
 /// The two objects that dial — a pane's client, and the app's shared mux pin.
-const CONNECT_DIALLERS: &[&str] = &[
+const CONNECT_DIALLERS: [&str; 2] = [
     "Sources/SlopDeskWorkspaceCore/Connection/ConnectionViewModel.swift",
     "Sources/SlopDeskWorkspaceCore/Connection/AppConnection.swift",
 ];
@@ -352,7 +352,7 @@ pub fn one_connect_one_ladder(tree: &Tree) -> Report {
                       growing back beside the one that owns it",
         },
         Claim::NoneOf {
-            paths: CONNECT_DIALLERS,
+            paths: &CONNECT_DIALLERS,
             pattern: r"var connectGeneration|var deliberatelyClosed|var retiredByHost|var evictedByHost",
             view: View::Code,
             message: "{files} STORES a connect generation or one of the three close latches — each is the \
@@ -386,7 +386,7 @@ mod tests {
             face.push_str("()\n");
         }
         fixture.write(super::CONNECT_FACE, &face);
-        for dialler in super::CONNECT_DIALLERS {
+        for dialler in &super::CONNECT_DIALLERS {
             fixture.write(dialler, "    private let connectRun = ConnectRun()\n");
         }
     }
@@ -409,7 +409,7 @@ mod tests {
             "    private var retiredByHost = false\n",
             "    private var evictedByHost = false\n",
         ] {
-            for dialler in super::CONNECT_DIALLERS {
+            for dialler in &super::CONNECT_DIALLERS {
                 fixture.append(dialler, drift);
                 assert!(
                     !super::one_connect_one_ladder(&fixture.tree()).is_clean(),

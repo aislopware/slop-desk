@@ -92,7 +92,6 @@ package final class SimulatorStreamConnection: SimulatorStreaming {
         case UInt32(SLOPDESK_DEVICE_WS_CONNECTED):
             sink(.connected)
         case UInt32(SLOPDESK_DEVICE_WS_TEXT):
-            // swiftlint:disable:next optional_data_string_conversion
             sink(.text(String(decoding: payload, as: UTF8.self)))
         case UInt32(SLOPDESK_DEVICE_WS_BINARY):
             // An unknown type byte is dropped here rather than forwarded: a message this build has
@@ -101,7 +100,6 @@ package final class SimulatorStreamConnection: SimulatorStreaming {
                 sink(.message(message))
             }
         default:
-            // swiftlint:disable:next optional_data_string_conversion
             let reason = String(decoding: payload, as: UTF8.self)
             sink(.ended(reason: reason.isEmpty ? nil : reason))
             disconnect()

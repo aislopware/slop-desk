@@ -96,7 +96,7 @@ impl View {
 /// comments, the next did not; one scoped to a struct, the next read the whole file and picked up a
 /// second declaration by accident. Here the scoping is a field, so a reader can see at a glance
 /// which extractions are scoped and which are not.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Extract {
     /// Repo-relative path.
     pub path: &'static str,
@@ -236,7 +236,7 @@ fn serde_field_names(haystack: &str) -> BTreeSet<String> {
 /// Separate from [`Extract`] because the subject is a TARGET rather than a file. "Both video halves
 /// accept the same seam sinks" is true of the half wherever in it the sinks are declared, and
 /// pinning it to one file would make an ordinary split of a big adapter look like a divergence.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Corpus {
     /// The directory to read, recursively.
     pub root: &'static str,
@@ -271,7 +271,7 @@ impl Corpus {
 /// green while covering nothing.
 ///
 /// Read [`View::Raw`] by default, and that is deliberate: one of these markers IS a doc line.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ByteMap {
     /// Repo-relative path.
     pub path: &'static str,
@@ -319,6 +319,7 @@ impl ByteMap {
 /// Every variant carries the sentence it prints. That sentence is the rule's interface — it names
 /// the doc section that explains why the rule exists — so it is written out per claim rather than
 /// generated from the pattern.
+#[derive(Clone, Copy, Debug)]
 pub enum Claim {
     /// A file must exist. The shape every ban implicitly needs and none of them stated.
     Exists {
@@ -1407,8 +1408,7 @@ impl Claim {
                 }
                 // Grouped by FILE PAIR rather than reported per shingle: the debt list is kept at
                 // that grain, and one clone spans as many windows as it has lines.
-                let mut pairs: std::collections::BTreeMap<(&str, &str), (&str, &str)> =
-                    std::collections::BTreeMap::new();
+                let mut pairs: BTreeMap<(&str, &str), (&str, &str)> = BTreeMap::new();
                 for (body, here) in &ours.windows {
                     let Some(there) = theirs.windows.get(body) else {
                         continue;
@@ -2018,7 +2018,7 @@ struct Shingles {
     /// The file count, for the vacuity floor.
     files: usize,
     /// Each normalised window, against the FIRST place it was seen.
-    windows: std::collections::BTreeMap<String, Site>,
+    windows: BTreeMap<String, Site>,
 }
 
 /// Every `window`-line body under `root`, normalised so only a real duplicate collides.
@@ -2054,7 +2054,7 @@ fn shingles(tree: &Tree, root: &str, extensions: &[&str], window: usize) -> Shin
     let comment = text::cached(r"//.*$");
     let mut out = Shingles {
         files: 0,
-        windows: std::collections::BTreeMap::new(),
+        windows: BTreeMap::new(),
     };
     for (path, source) in tree.under(root) {
         let matching_extension = path
@@ -2074,15 +2074,22 @@ fn shingles(tree: &Tree, root: &str, extensions: &[&str], window: usize) -> Shin
             .filter(|(_, line)| !noise.is_match(line) && !carried.is_match(line) && !forwards_itself(line))
             .collect();
         for start in 0..(body.len() + 1).saturating_sub(window.max(1)) {
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "the loop head stops `window` lines short of the end"
+            )]
             let joined = body[start..start + window]
                 .iter()
                 .map(|(_, line)| line.as_str())
                 .collect::<Vec<_>>()
                 .join(" ~ ");
+            let Some((line, _)) = body.get(start) else {
+                break;
+            };
             out.windows.entry(joined).or_insert_with(|| {
                 Site {
                     path: display.clone(),
-                    site: format!("{display}:{}", body[start].0),
+                    site: format!("{display}:{line}"),
                 }
             });
         }
@@ -2206,6 +2213,12 @@ pub const GATE_RULES: &str = "rust/slopdesk-invariants/src/rules/";
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "a test asserts by panicking, and a fixture it built itself is not a runtime input"
+    )]
+
     use std::fs;
     use std::path::PathBuf;
 
@@ -2217,7 +2230,7 @@ mod tests {
     impl Fixture {
         fn new(name: &str) -> Self {
             let root = std::env::temp_dir().join(format!("slopdesk-claim-{name}"));
-            let _ = fs::remove_dir_all(&root);
+            let _ignored = fs::remove_dir_all(&root);
             fs::create_dir_all(&root).expect("fixture root");
             Self(root)
         }
@@ -2236,7 +2249,7 @@ mod tests {
 
     impl Drop for Fixture {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            let _ignored = fs::remove_dir_all(&self.0);
         }
     }
 

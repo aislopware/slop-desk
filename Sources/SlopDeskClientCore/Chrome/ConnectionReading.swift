@@ -302,7 +302,6 @@ package enum ConnectionReading {
             for offset in 2..<6 { length = length << 8 | Int(blob[cursor + offset]) }
             cursor += 6
             guard blob.count - cursor >= length else { break }
-            // swiftlint:disable:next optional_data_string_conversion
             let value = String(decoding: blob[cursor..<(cursor + length)], as: UTF8.self)
             cursor += length
             answer.append(ConnectionMetricRun(metric: metric, value: value, alarm: alarm))

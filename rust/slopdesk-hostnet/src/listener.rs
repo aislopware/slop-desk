@@ -19,6 +19,10 @@
 //! constraint is zero allocations added per chunk, which a blocking read into a reused buffer meets
 //! by construction.
 
+// stderr IS hostd's log, and this module is where hostd walks away from sockets a client has already
+// established. Each line here names a connection that would otherwise vanish without a trace.
+#![expect(clippy::print_stderr, reason = "stderr is hostd's log; launchd captures it")]
+
 use std::io::{self, Read as _};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};

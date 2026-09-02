@@ -9,6 +9,14 @@
 //! Exit codes are the shell's, verbatim, because `just provision-check` reads them: `0` all
 //! present, `1` something is missing or a digest did not match, `2` the arguments were wrong.
 
+// The shell script this replaced printed the same lines; `just provision` shows them and
+// `just provision-check` reads the exit code.
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "stdout is the provisioning log; stderr is the one refusal, and the exit code is the answer"
+)]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 

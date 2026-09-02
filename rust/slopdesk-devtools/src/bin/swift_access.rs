@@ -7,6 +7,12 @@
 //! `slopdesk_devtools::access` — read that first. The compiler is the oracle either way: run
 //! `swift build` after.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the per-file counts are this binary's whole output"
+)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

@@ -16,6 +16,15 @@
 //! seeded breakage, it proves the two agree about that breakage. It is a porting instrument, not a
 //! gate, and it is expected to disappear with the last shell section.
 
+// The gate's report IS its standard streams: violations and the read failure on stderr, where the
+// shell wrote them and the justfile reads them, and the `--list` and `--compare-shell` tables on
+// stdout.
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "a gate's verdict is its standard streams"
+)]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 

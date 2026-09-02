@@ -21,8 +21,9 @@ import PackageDescription
 // Rust staticlib is ONE object per crate: the object holding that door also holds every other
 // `slopdesk_*` entry point, so an executable calling ANY of them drags libgit2's members in. The
 // three flags cost a link-time symbol lookup on the products that never call it — `-dead_strip`
-// removes the code itself — and `scripts/check-supervisor.sh` fails a new `CSlopDeskFFI` dependent
-// that forgets them, which is the failure a person would otherwise meet as a wall of `_iconv`.
+// removes the code itself — and `just lint-invariants` (`ffi-dependents-link-the-frameworks`) fails a
+// new `CSlopDeskFFI` dependent that forgets them, which is the failure a person would otherwise meet
+// as a wall of `_iconv`.
 //
 // macOS only: the iOS slices have no libgit2 in them at all (`slopdesk_ffi_macos.h`'s `TARGET_OS_OSX`
 // region, and the `cfg` behind it).
@@ -311,7 +312,11 @@ let package = Package(
         // transport may be adopted, how long the next retry waits — are `slopdesk_clientsession`.
         // The actor keeps its transport, its four background tasks and its inbox; what came out is
         // the table of cases underneath them, whose every failure is silent rather than visible.
-        .target(name: "SlopDeskClient", dependencies: ["SlopDeskTransport", "SlopDeskProtocol", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskClient",
+            dependencies: ["SlopDeskTransport", "SlopDeskProtocol", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // THE TERMINAL RENDERER — the `TerminalSurfaceHosting` conformer, its two platform views and
         // the installer the app shells call. `docs/68-terminal-surface-in-rust.md` is the argument:
@@ -459,8 +464,8 @@ let package = Package(
         // `#if os(macOS)` — inherited from the days the panels were a Mac-only surface, never from a
         // Mac-only dependency: the module imports Foundation, CoreGraphics, CoreMedia and Network,
         // all four of which the phone has. The gates made the iOS build compile forty-one EMPTY
-        // files, which is why the parity gap was invisible. They are gone, `scripts/check-supervisor.sh`
-        // keeps them gone, and what is left is the floor both UI halves stand on.
+        // files, which is why the parity gap was invisible. They are gone, `just lint-invariants` keeps
+        // them gone, and what is left is the floor both UI halves stand on.
         .target(
             name: "SlopDeskDevicePanels",
             dependencies: [
@@ -567,8 +572,8 @@ let package = Package(
         // wandering tempo and `BrailleCell`'s walk, `SVGPath`/`VectorIcon`/`OttyIcon`, the nerd-font
         // splice's AppKit half, the search field's jump-free configuration, and `StatusPresentation`
         // — which is a palette ANSWER, not a drawing. Every mark that has two renderers keeps them
-        // one floor up, one per framework, and `check-supervisor.sh` fails the build if a `some View`
-        // appears here.
+        // one floor up, one per framework, and `just lint-invariants` (`no-swiftui-anywhere`) fails if a
+        // `some View` appears here.
         //
         // It reverses the 2026-06-24 "no separate SPM target — `SlopDeskDesignSystem` stays deleted"
         // ruling on new grounds: that decision was taken when there was exactly ONE UI target to

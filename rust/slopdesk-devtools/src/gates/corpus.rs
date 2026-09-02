@@ -184,6 +184,7 @@ const LARGEST_SCANNED: u64 = 8 * 1024 * 1024;
 /// # Errors
 /// One message naming every offending file and what was found in it — never the value, which would
 /// put the leak in the log that reports it.
+#[expect(clippy::print_stdout, reason = "the fingerprint census is this gate's report")]
 pub fn run(root: &Path) -> Result<(), String> {
     let files = tracked(root, &[RECORDINGS])?;
     if files.len() < FLOOR {

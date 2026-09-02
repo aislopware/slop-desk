@@ -72,8 +72,8 @@ strip = "debuginfo"
 # never writes to stderr (it has nothing to say — every failure is an `Errno` returned to a caller
 # that knows what it was doing), so `print_stderr` stays denied.
 [lints.rust]
-# See the header: `deny` on purpose, with a self-expiring `#[expect]` at every site.
 unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 
 missing_docs = "deny"
 missing_debug_implementations = "deny"
@@ -122,13 +122,14 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
+# See the header: `deny` on purpose, with a self-expiring `#[expect]` at every site.
 # A duplicate deep in nix's tree is not ours to resolve.
-multiple_crate_versions = "allow"
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
 #   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
 #   FMA rounds once where the wire rounds twice, so taking the advice changes the `f64` bit patterns
 #   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
 #   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
 #   here would be obeyed before anyone reads this file.
+multiple_crate_versions = "allow"
 suboptimal_flops = "allow"
 imprecise_flops = "allow"

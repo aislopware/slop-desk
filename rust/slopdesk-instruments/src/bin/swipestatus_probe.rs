@@ -24,6 +24,13 @@
 //!                            [--display-id 0] [--seconds 12]
 //! ```
 
+// Every line this probe prints is a reading; the exit code is its verdict, and the readings go to
+// stderr so a caller that only wants the verdict can drop them.
+#![expect(
+    clippy::print_stderr,
+    reason = "stderr is this probe's report; the exit code is its verdict"
+)]
+
 use std::net::UdpSocket;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};

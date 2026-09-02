@@ -105,7 +105,7 @@ impl OutProof {
             .map_or(0, |since| since.subsec_nanos());
         let nonce = format!("{}_{stamp}", std::process::id());
         let file = work.join(format!("out-proof-{nonce}.txt"));
-        let _ = fs::remove_file(&file);
+        let _ignored = fs::remove_file(&file);
         Self {
             expect: format!("SLOPDESK_OUT_{nonce}_42_END"),
             // `$((6*7))` reaches the REMOTE shell unexpanded, which is the whole point: this
@@ -148,6 +148,7 @@ fn echo_latency(log: &Log) -> Option<(usize, f64, f64)> {
     let median = samples.get(count.div_ceil(2) - 1).copied().unwrap_or_default();
     // `int(NR*0.95)` in integers rather than in floats: `count * 95 / 100` IS that floor, exactly,
     // and it cannot round a sample count of 20 to 19.999999999999996 the way the double does.
+    #[expect(clippy::integer_division, reason = "the floor is the index being computed")]
     let ninety_fifth_index = (count * 95 / 100).max(1);
     let ninety_fifth = samples.get(ninety_fifth_index - 1).copied().unwrap_or_default();
     Some((count, median, ninety_fifth))
@@ -162,7 +163,7 @@ struct App {
 impl Drop for App {
     fn drop(&mut self) {
         reap(self.child.id(), "SlopDesk");
-        let _ = self.child.wait();
+        let _ignored = self.child.wait();
     }
 }
 
@@ -176,6 +177,7 @@ impl Drop for App {
     clippy::too_many_lines,
     reason = "one gate is one narrative; splitting it hides which assertion follows which"
 )]
+#[expect(clippy::print_stdout, reason = "the banner is this gate's report")]
 pub fn run(root: &Path, mode: Mode) -> Result<(), String> {
     let work = work_dir(root, "macos-verify")?;
     let suite = Suite::for_gate("macos");
@@ -274,7 +276,7 @@ pub fn run(root: &Path, mode: Mode) -> Result<(), String> {
     );
     let mut windows = 0;
     let mut seen = String::new();
-    let _ = poll("a window on screen", 40, || {
+    let _ignored = poll("a window on screen", 40, || {
         if !alive(pid) {
             return true;
         }
@@ -320,7 +322,7 @@ pub fn run(root: &Path, mode: Mode) -> Result<(), String> {
         &format!("asking the app what it mounted ({})…", control.socket.display()),
     );
     let mut sessions = 0;
-    let _ = poll("the control socket to answer", 40, || {
+    let _ignored = poll("the control socket to answer", 40, || {
         if !alive(pid) {
             return true;
         }
@@ -443,6 +445,7 @@ fn connected_half(hostd: &Hostd, proof: &OutProof, app_log: &Log) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
     use super::Mode;
 
     /// The two spellings that survive, and nothing else.
@@ -510,6 +513,6 @@ mod tests {
             super::echo_latency(&super::Log::at(silent)).is_none(),
             "a probe that announced itself and printed nothing is not a sample of zero"
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ignored = std::fs::remove_dir_all(&root);
     }
 }

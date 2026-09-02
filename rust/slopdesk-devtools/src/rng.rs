@@ -16,6 +16,7 @@
 
 /// A seeded stream of screens' worth of choices.
 #[derive(Debug, Clone)]
+#[expect(missing_copy_implementations, reason = "a copied generator forks the stream")]
 pub struct Rng {
     state: u64,
 }

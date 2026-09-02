@@ -113,6 +113,10 @@ pub fn on_path(program: &str) -> bool {
 }
 
 /// The `── … ──` banner every stage of a release prints, so a long log reads as steps.
+#[expect(
+    clippy::print_stdout,
+    reason = "the banner is how a release log reads as steps"
+)]
 pub fn step(what: &str) {
     println!("── {what} ──");
 }

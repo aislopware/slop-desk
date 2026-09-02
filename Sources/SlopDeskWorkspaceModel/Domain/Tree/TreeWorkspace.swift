@@ -101,7 +101,6 @@ public enum TreeWorkspaceDefaults {
 private func wsString(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String {
     // Non-failable on purpose: what comes back is a `&'static str` the crate spelled, so it is UTF-8
     // by construction and a failable initialiser would only add an arm no answer can reach.
-    // swiftlint:disable:next optional_data_string_conversion
     String(decoding: wsBytes(call), as: UTF8.self)
 }
 

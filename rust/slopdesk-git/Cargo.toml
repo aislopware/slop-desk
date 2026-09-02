@@ -144,8 +144,14 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
-multiple_crate_versions = "allow"
 # See `slopdesk-ffi/Cargo.toml` — the FMA the nursery wants is the one `CLAUDE.md` forbids, and the
 # allow is repo-wide rather than per-crate so it cannot be obeyed before anyone reads the reason.
+multiple_crate_versions = "allow"
 suboptimal_flops = "allow"
 imprecise_flops = "allow"
+
+# `cargo machete` reads no Rust that names `libz_sys`, and there is none to read: the crate is here
+# for its BUILD SCRIPT, which compiles zlib into this archive so `git2` links no system `libz`.
+# The comment on the dependency is the argument; this table is what keeps the tool from calling it unused.
+[package.metadata.cargo-machete]
+ignored = ["libz-sys"]

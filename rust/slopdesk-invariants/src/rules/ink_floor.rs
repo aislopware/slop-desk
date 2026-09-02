@@ -28,7 +28,7 @@ const SLATE_DESIGN: &str = "Sources/SlopDeskSlate/SlateDesign.swift";
 /// The Mac's scene root — the one file that could inject an environment key nothing resolves.
 const MAC_APP: &str = "Sources/SlopDeskMacUI/SlopDeskMacApp.swift";
 /// The two halves of the pane status pill, both of which ship today.
-const PILL_HALVES: &[&str] = &[
+const PILL_HALVES: [&str; 2] = [
     "Sources/SlopDeskPhoneUI/Pane/PaneStatusPillsView.swift",
     "Sources/SlopDeskMacUI/Pane/MacPaneStatusPills.swift",
 ];
@@ -369,7 +369,7 @@ pub fn one_drop_chip_two_drawings(tree: &Tree) -> Report {
         // than handing the ink straight to the shared function, is the old per-renderer table
         // creeping back one case at a time.
         Claim::NoneQuoting {
-            roots: PILL_HALVES,
+            roots: &PILL_HALVES,
             extensions: SWIFT,
             needles: rungs_of(PILL_INK_SRC, "^package enum PaneStatusPillInk[:[:space:]{]"),
             template: "case .{needle}:",
@@ -379,7 +379,7 @@ pub fn one_drop_chip_two_drawings(tree: &Tree) -> Report {
                       Slate.paneStatusPillFill's alone now (docs/56 §3.5)",
         },
     ];
-    for half in PILL_HALVES {
+    for half in &PILL_HALVES {
         claims.push(Claim::Names {
             // QUALIFIED, so the reader is pinned to the floor's switch rather than to the word. A
             // half that kept a `paneStatusPillFill` of its own would satisfy the bare name while
@@ -642,7 +642,7 @@ pub fn a_named_ink_table_answers_every_renderer(tree: &Tree) -> Report {
         Claim::Resolved {
             label: "PaneStatusPillFill",
             needles: rungs_of(PILL_INK_SRC, "^package enum PaneStatusPillFill[:[:space:]{]"),
-            halves: PILL_HALVES,
+            halves: &PILL_HALVES,
             template: r"case (let |var )?\.{needle}\b",
             message: "{half} does not resolve the PaneStatusPillFill .{needle} rung — the renderers would \
                       ink it differently (docs/56 §3.5)",
@@ -1081,7 +1081,7 @@ mod tests {
                 "package static func paneStatusPillFill(_ ink: PaneStatusPillInk) -> SlateNativeColor \
                  {\n    switch ink {\n    case .security: .red\n    case .sync: .blue\n    }\n}\n",
             );
-        for half in super::PILL_HALVES {
+        for half in &super::PILL_HALVES {
             fixture.write(half, "fill = Slate.Native.paneStatusPillFill(ink)\n");
         }
         for half in [
@@ -1164,7 +1164,7 @@ mod tests {
     #[test]
     fn a_re_declared_drop_preview_figure_is_red() {
         const ART: &str = "Sources/SlopDeskSlate/PaneDropPreviewArt.swift";
-        const HALVES: &[&str] = &[
+        const HALVES: [&str; 2] = [
             "Sources/SlopDeskMacUI/Pane/MacPaneMoveAffordance.swift",
             "Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordanceView.swift",
         ];
@@ -1174,7 +1174,7 @@ mod tests {
 
         let preview = |fixture: &Fixture| {
             fixture.write(ART, "package extension Slate {\n    enum DropPreview {}\n}\n");
-            for half in HALVES {
+            for half in &HALVES {
                 fixture.write(half, READS);
             }
         };

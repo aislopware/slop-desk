@@ -126,7 +126,7 @@ impl Control {
 
     /// Remove the socket file, which a killed instance leaves behind.
     pub fn unlink(&self) {
-        let _ = fs::remove_file(&self.socket);
+        let _ignored = fs::remove_file(&self.socket);
     }
 
     /// Ask one verb and take its raw JSON, or `None` when the instance does not answer.
@@ -317,6 +317,8 @@ impl Launch<'_> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
+    #![expect(clippy::indexing_slicing, reason = "a test drives a buffer it wrote itself")]
     use super::{DEFAULTS_SUITE_ENV, PaneRow, Projection, TabRow, WindowRow};
 
     fn projection_of(windows: &[WindowRow], tabs: &[TabRow], panes: &[PaneRow]) -> Projection {

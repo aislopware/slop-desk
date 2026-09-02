@@ -10,6 +10,12 @@
 //! and every assertion is machine-checked — and operator harnesses by cost. Run them by hand, after
 //! touching what they cover.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the verdict and the usage are this binary's whole output"
+)]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -52,11 +58,10 @@ fn main() -> ExitCode {
         },
     };
 
-    let Some(gate) = arguments.first().cloned() else {
+    let Some((gate, rest)) = arguments.split_first() else {
         eprint!("{USAGE}");
         return ExitCode::from(2);
     };
-    let rest = &arguments[1..];
 
     match gate.as_str() {
         "macos" => {
@@ -105,8 +110,8 @@ fn run_video(root: &std::path::Path, arguments: &[String]) -> ExitCode {
         second_client: false,
     };
     let mut index = 0;
-    while index < arguments.len() {
-        match arguments[index].as_str() {
+    while let Some(argument) = arguments.get(index) {
+        match argument.as_str() {
             "--window-title" => {
                 let Some(title) = arguments.get(index + 1) else {
                     eprintln!("slopdesk-guigate: --window-title needs a title");

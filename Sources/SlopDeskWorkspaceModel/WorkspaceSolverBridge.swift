@@ -222,7 +222,6 @@ package func wsRuns(_ blob: [UInt8], count: Int) -> [String] {
         for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
         cursor += 4
         guard blob.distance(from: cursor, to: blob.endIndex) >= length else { break }
-        // swiftlint:disable:next optional_data_string_conversion
         runs.append(String(decoding: blob[cursor..<(cursor + length)], as: UTF8.self))
         cursor += length
     }

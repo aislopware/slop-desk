@@ -65,7 +65,11 @@ pub fn button_body(motion: Motion, tag: u32, x: f64, y: f64, clicks: u8) -> Vec<
 }
 
 /// What the host said about the hello.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[expect(
+    variant_size_differences,
+    reason = "one ack is parsed and matched, never held in a collection"
+)]
 pub enum Ack {
     /// A well-formed ack.
     Accepted {

@@ -34,8 +34,19 @@ unsafe_code = "forbid"
 
 missing_docs = "deny"
 missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
 unreachable_pub = "deny"
 unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
 rust_2018_idioms = { level = "deny", priority = -1 }
 rust_2024_compatibility = { level = "deny", priority = -1 }
 future_incompatible = { level = "deny", priority = -1 }
@@ -44,15 +55,33 @@ future_incompatible = { level = "deny", priority = -1 }
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
 
 # Disabled, with a reason:
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
 #   the fused multiply-add `CLAUDE.md` forbids.
+multiple_crate_versions = "allow"
 suboptimal_flops = "allow"
 imprecise_flops = "allow"
-
-unwrap_used = "deny"
-indexing_slicing = "deny"
-todo = "deny"
-unimplemented = "deny"
-dbg_macro = "deny"
