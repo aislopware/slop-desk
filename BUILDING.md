@@ -84,7 +84,7 @@ rust/slopdesk-videohostd/target/release/slopdesk-videohostd            # serves 
 rust/slopdesk-videohostd/target/release/slopdesk-videohostd --window-id <N>
 ```
 
-Window panes default to 30 fps, desktop panes to 60. `--fps N` overrides.
+Window and desktop panes both announce 60 fps; the capture ceiling is twice that. `--fps N` overrides.
 
 ## Run a client
 

@@ -34,7 +34,7 @@ use std::time::Duration;
 use slopdesk_video::capture_region::{self, DEFAULT_MIN_DELTA, DEFAULT_MIN_OVERLAP_FRACTION, WindowSnapshot};
 use slopdesk_video::geometry::{VideoPoint, VideoRect, VideoSize};
 
-/// Polls per second during a drag — one per video frame at the 30 fps floor.
+/// Polls per second during a drag — every other video frame at the 60 fps default.
 pub const DRAG_POLL_HZ: f64 = 30.0;
 
 /// Sample the region every this-many polls, so ~6 Hz at the drag cadence.

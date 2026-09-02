@@ -726,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shape_defaults_to_the_swift_inits_own_arguments() {
+    fn a_shape_defaults_to_the_daemons_own_arguments() {
         let shape = Shape::default();
         assert_eq!(shape.bitrate, default_bitrate());
         assert_eq!(shape.fps, 60);

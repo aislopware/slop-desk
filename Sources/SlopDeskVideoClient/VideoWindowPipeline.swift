@@ -387,10 +387,10 @@ package final class VideoWindowPipeline {
             .flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultFloorMs
         let playoutCeilMs = EnvConfig.string("SLOPDESK_PLAYOUT_CEIL_MS")
             .flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultCeilMs
-        // Cold-start content fps (coding-tool default 30, matching the host); the host's `streamCadence`
-        // control message rebases this live via `setContentFps`, so a host/client default mismatch only
-        // affects the brief pre-announce window. SLOPDESK_CONTENT_FPS overrides.
-        let contentFps = EnvConfig.string("SLOPDESK_CONTENT_FPS").flatMap(Double.init) ?? 30.0
+        // Cold-start content fps, the host's own default; the host's `streamCadence` control message
+        // rebases this live via `setContentFps`, so a host/client default mismatch only affects the
+        // brief pre-announce window. SLOPDESK_CONTENT_FPS overrides.
+        let contentFps = EnvConfig.string("SLOPDESK_CONTENT_FPS").flatMap(Double.init) ?? 60.0
         // SCROLL-HINT REPROJECTION (default OFF): build the offset law for this pane and the main-actor
         // closure that applies its offset to the renderer (+ optionally re-presents). When the gate is
         // off `reprojector`/`applyReprojection` stay nil ⇒ the pacer skips every reproject path ⇒ the

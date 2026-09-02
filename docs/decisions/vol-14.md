@@ -1293,3 +1293,33 @@ that cannot keep up. Three `--fps 60` runs after: 0 steps, 1–3 gaps, 59 fps. T
 Recorded and NOT yet changed, in `docs/71` §3: the `--fps 30` default is nominal (the cadence gate
 never engages at the base rate, so the stream already runs at 57–59), and vsync-on reads the
 cleanest cadence at +6 ms. Those two defaults are the next ruling, not this one.
+
+## The announced rate is the rate that flows, and the vsync default stays off (2026-09-02)
+
+Two defaults `docs/71` measured and left standing: one is flipped, and the other was flipped and
+measured back, with the numbers as the reason for both.
+
+**`--fps` defaults to 60.** The number was never a cap: the capture ceiling is twice it, the cadence
+gate engages only when the governor steps BELOW it, and every changed frame the capture delivers is
+encoded — so a 60 Hz source ran at 57–59 under a default of 30, while the bitrate budget,
+`ExpectedFrameRate`, the `streamCadence` announcement, the client's cold-start cadence and the
+deadline pacer's interval all believed 30. The deadline pacer halving the stream was that mismatch
+made visible. With the encode-load pacer recalibrated (the ruling above), `--fps 60` measures 0
+steps, 1–3 send gaps and 59.0–59.4 new frames a second, remote/source 0.98 — the source's own
+cadence. So the default now says what flows: `args.rs`, the capture `Shape`, and the client's
+`SLOPDESK_CONTENT_FPS` cold start all read 60, and the docs stop calling 30 a coding-tool default.
+The alternative — making the gate engage AT the announced rate, a true cap — was considered and
+refused: the `--fps 30 + SLOPDESK_CAPTURE_HZ=120` row (60 fps, zero stalls) is the smoothest in
+the table precisely because nothing gates at the base rate, and a metronome at the source's exact
+rate would reject early-arriving frames on commit jitter.
+
+**`SLOPDESK_VSYNC` stays OFF, and the +6 ms was a 30 fps number.** The renderer's comment claimed
+Parsec presents without vsync by default; Parsec's own documentation says `client_vsync` defaults
+on, and at `--fps 30` the locked present measured exactly 60.0 with a third of the present gaps for
++6 ms at p50 (34.4 vs 28.1) — so it was flipped on. Re-measured the same day at the new 60 fps
+default it costs TWO FRAMES: p50 50.5 / p90 52.8 ms locked against p50 21.2 / p90 28.2 ms unlocked,
+the two distributions not overlapping and the locked spread a three-frame quantum. With the content
+rate matched to the refresh the pacer and the two drawables fill, and every frame waits out a queue
+it never met at 30. Parsec's composite latency is ~33 ms; 50 loses to it and 21 beats it. So the
+default is off again, `SLOPDESK_VSYNC=1` is the A/B, and the vsync-on cadence is a target for the
+present path itself — drawable count and present scheduling — rather than a default flip.

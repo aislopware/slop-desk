@@ -280,10 +280,10 @@ pub struct Shape {
 }
 
 impl Default for Shape {
-    /// The Swift `init`'s own arguments: 30 fps, unscaled, video range, per-window, no audio.
+    /// The daemon's own defaults: 60 fps, unscaled, video range, per-window, no audio.
     fn default() -> Self {
         Self {
-            fps: 30,
+            fps: 60,
             capture_scale: 1.0,
             full_range: false,
             prefer_display_anchored: false,
@@ -2362,9 +2362,9 @@ mod tests {
     }
 
     #[test]
-    fn a_shape_defaults_to_the_swift_inits_own_arguments() {
+    fn a_shape_defaults_to_the_daemons_own_arguments() {
         let shape = Shape::default();
-        assert_eq!(shape.fps, 30);
+        assert_eq!(shape.fps, 60, "the announced rate a 60 Hz source produces");
         assert!(
             (shape.capture_scale - 1.0).abs() < f64::EPSILON,
             "unscaled by default"

@@ -139,19 +139,19 @@ public final class MetalVideoRenderer {
         metalLayer.pixelFormat = .bgra8Unorm
         metalLayer.framebufferOnly = true
         metalLayer.maximumDrawableCount = 2 // ~1 vsync latency (doc 04)
-        // PARSEC-PARITY: present the drawable as soon as the GPU finishes instead of holding for the
-        // compositor's next refresh — Parsec's DisplayImmediately model (its vsync toggle is OFF by
-        // default). This shaves the 0-8.3ms (avg ~4 at 120Hz) composite-alignment wait off EVERY frame,
-        // the single largest client-present latency stage after the pacer. Cost is possible mid-scan
-        // tearing during fast motion — the trade Parsec makes for latency on an interactive desktop. The
-        // FramePacer still bounds render cadence to the content rate, so vsync-off adds no extra content
-        // presents (no runaway). `SLOPDESK_VSYNC=1` restores the vsync-locked present (tear-free, +1
-        // refresh latency) for a tearing-sensitive panel or an A/B.
+        // Present the drawable as soon as the GPU finishes instead of holding for the compositor's
+        // next refresh. Measured on the smoothness harness (`docs/71`) with the content rate at the
+        // display's own 60 Hz: the vsync-locked present costs two whole frames at p50 glass-to-glass
+        // (50.5 ms against 21.2 ms) — with content and refresh rate-matched, the pacer plus the two
+        // drawables fill and every frame waits out a queue. Its reward is a tear-free, metronome
+        // cadence (exactly 60.0, a third of the present gaps); the cost is what a remote desktop
+        // feels first. `SLOPDESK_VSYNC=1` restores the locked present for a tearing-sensitive panel or
+        // an A/B. Parsec's own `client_vsync` defaults on, and it pays the same price. The FramePacer
+        // bounds the render cadence to the content rate either way, so neither mode adds presents.
         // macOS-only: `displaySyncEnabled` does not exist on iOS — must stay `#if os(macOS)`-gated or
         // the iOS app build breaks.
         // Resolved through `EnvConfig` (real env FIRST, then the settings overlay) rather than off
-        // `ProcessInfo` — the comparison is the same `== "1"` default-OFF idiom either way, so the
-        // only thing that moves is that a `config.toml` `[env]` line now reaches it.
+        // `ProcessInfo`, so a `config.toml` `[env]` line reaches it.
         #if os(macOS)
         if EnvConfig.string("SLOPDESK_VSYNC") != "1" {
             metalLayer.displaySyncEnabled = false

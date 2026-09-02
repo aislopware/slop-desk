@@ -43,13 +43,13 @@ span; "stalls" are the remote window's 1-slot bin.
 
 | configuration | remote new/s | remote/source | stalls | steps | gaps | encode wall |
 | --- | --- | --- | --- | --- | --- | --- |
-| default (`--fps 30`, capture 60 Hz, vsync off) | 57–59 | 0.93–0.96 | 1–4 | 0 | 9–20 | 11.0–13.1 ms |
+| former default (`--fps 30`, capture 60 Hz, vsync off) | 57–59 | 0.93–0.96 | 1–4 | 0 | 9–20 | 11.0–13.1 ms |
 | `--fps 60` (capture 120 Hz), pacer as shipped | 49–54 | 0.85–0.91 | 3–8 | 2–4 | 45–133 | 11–15 ms |
 | `--fps 60` + `SLOPDESK_CAPTURE_HZ=60`, pacer as shipped | 55–57 | 0.92–0.95 | 2–5 | 0–2 | 8–51 | 11–19 ms |
 | `--fps 30` + `SLOPDESK_CAPTURE_HZ=120` | 60 | 0.97 | 0 | 0 | 4 | 11.6 ms |
 | `SLOPDESK_VSYNC=1` (fps 30) | 60.0 exactly | 0.96–0.98 | 0–3 | 0 | — | — |
 | `SLOPDESK_PACER=deadline` (fps 30) | 30 | 0.50 | — | 0 | — | — |
-| **`--fps 60`, pacer RECALIBRATED (§3)** | **59.0–59.4** | **0.98** | **0–1** | **0** | **1–3** | 10.5–12.6 ms |
+| **`--fps 60`, pacer RECALIBRATED (§3) — the default since** | **59.0–59.4** | **0.98** | **0–1** | **0** | **1–3** | 10.5–12.6 ms |
 
 Glass-to-glass (`--latency`, 500 ms flasher, ~38 pairs a run):
 
@@ -58,6 +58,8 @@ Glass-to-glass (`--latency`, 500 ms flasher, ~38 pairs a run):
 | default, vsync off | 28.1 ms | 40.4 ms |
 | `SLOPDESK_VSYNC=1` | 34.4 ms | 50.4 ms |
 | `--fps 60`, vsync off | 27.2 ms | — |
+| `--fps 60` default + pacer recalibrated, vsync off (30 pairs) | 21.2 ms | 28.2 ms |
+| `--fps 60` default + pacer recalibrated, `SLOPDESK_VSYNC=1` (30 pairs) | 50.5 ms | 52.8 ms |
 
 The source page itself, alone, reads 59.9–60.8 new frames a second with 1–3 one-slot stalls a span:
 the remote's 0–1 stalls under the recalibrated pacer is the source's own cadence, not a ceiling the
@@ -67,15 +69,15 @@ reading.
 
 ## 3. What the numbers showed, and what changed
 
-**The `--fps 30` default is nominal.** `EncodeCadenceGate` engages only when the governed rate is
-UNDER `shape.fps`, and it starts equal, so nothing gates the encode at the announced rate: every
-changed frame the capture delivers (ceiling 2×fps = 60 Hz) is encoded, and the "30 fps" stream
-runs at 57–59. Everything that reads the number — the bitrate budget, `ExpectedFrameRate`, the
+**The `--fps 30` default WAS nominal, and is now 60.** `EncodeCadenceGate` engages only when the
+governed rate is UNDER `shape.fps`, and it starts equal, so nothing gates the encode at the announced
+rate: every changed frame the capture delivers (ceiling 2×fps) is encoded, and the "30 fps" stream
+ran at 57–59. Everything that reads the number — the bitrate budget, `ExpectedFrameRate`, the
 `streamCadence` announcement, the client's cold-start content fps, the deadline pacer's interval —
-believes 30 while 60 flows. The deadline pacer row above is that mismatch made visible: it paces
-to the announced 30 and halves the stream. This is recorded here and NOT yet changed; the truthful
-default (60, with the client's cold start and the docs to match) is the next change, and it waits
-on the pacer below because `--fps 60` as shipped was WORSE than 30.
+believed 30 while 60 flowed. The deadline pacer row above is that mismatch made visible: it paces
+to the announced 30 and halves the stream. The default is 60 now (`args.rs`, the capture `Shape`,
+the client's `SLOPDESK_CONTENT_FPS` cold start), landed once the pacer below stopped making
+`--fps 60` worse than 30; the ruling is in `docs/decisions/vol-14.md`.
 
 **`--fps 60` was a trap, and the encode-load pacer was the trap.** `EncodeLoadPacer` stepped a rung
 down (60 → 30) once the encode-wall EWMA passed 0.85 × the budget for THREE frames, and back up
@@ -95,11 +97,15 @@ step down again. Three `--fps 60` runs after: 0 steps, 1–3 send gaps, 59.0–5
 second, remote/source 0.98 — the source's own cadence. The unit tests pin the measured trap (a
 12 ms wall with 19 ms spikes never steps) and the burst case.
 
-**Vsync on reads the cleanest cadence at +6 ms.** `SLOPDESK_VSYNC=1` presents exactly 60.0 with
-3–6 present gaps against 11–24 without, no tearing, and costs 6 ms at p50 glass-to-glass. The
-renderer's comment claims Parsec presents without vsync by default; Parsec's own documentation says
-`client_vsync` defaults ON. Not flipped in this change — the flip, its escape hatch and its docs
-row are the next change with the fps default.
+**Vsync on reads the cleanest cadence — at +6 ms under `--fps 30`, and at +29 ms under the 60 fps
+default.** At 30 the locked present reads exactly 60.0 with 3–6 present gaps against 11–24 without,
+no tearing, for 6 ms at p50. Flipped on with the fps default and measured back the same day: at 60,
+p50 50.5 / p90 52.8 ms locked against p50 21.2 / p90 28.2 ms unlocked — a two-frame cost with a
+three-frame spread, the signature of the pacer and the two drawables filling once content and
+refresh are rate-matched. The default stays off (`SLOPDESK_VSYNC=1` is the A/B, `docs/46`); the
+locked cadence is the present path's target, not a default. The renderer's comment claimed Parsec
+presents without vsync by default; Parsec's own documentation says `client_vsync` defaults ON —
+and pays the same price.
 
 ## 4. How to re-run this
 

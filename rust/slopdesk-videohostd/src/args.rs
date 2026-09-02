@@ -27,8 +27,13 @@ const VD_MIN_POINT_WIDTH: u32 = 320;
 /// How tall a virtual display may be asked to be, in points.
 const VD_MIN_POINT_HEIGHT: u32 = 240;
 
-/// The frame-rate ceiling `--fps` accepts. A cap, not a target: the encoder is a coding tool here
-/// and not a game stream, which is why the DEFAULT is far below it.
+/// The frame-rate ceiling `--fps` accepts.
+///
+/// The default is the rate a 60 Hz source actually produces. Every changed frame the capture
+/// delivers is encoded; the number is what the stream is ANNOUNCED and BUDGETED at (the bitrate
+/// target, `ExpectedFrameRate`, the client's cold-start cadence), and it is the base rung the fps
+/// governor steps down from under congestion. A default below the source's rate would have the
+/// stream run at one rate while everything that reads the number believes another.
 const FPS_MAX: u32 = 120;
 
 /// Everything the daemon learns from its own command line.
@@ -52,7 +57,7 @@ pub struct Arguments {
     pub scale: f64,
     /// Live-encoder target bitrate, in Mbps.
     pub bitrate_mbps: u32,
-    /// Encoder frame-rate cap.
+    /// The announced and budgeted encode rate, and the governor's base rung.
     pub fps: u32,
     /// Create a `HiDPI` virtual display and park each remoted window on it.
     ///
@@ -76,7 +81,7 @@ impl Default for Arguments {
             cursor_port: 9001,
             scale: 1.0,
             bitrate_mbps: 12,
-            fps: 30,
+            fps: 60,
             virtual_display: false,
             vd_point_width: 1920,
             vd_point_height: 1080,
@@ -232,8 +237,8 @@ impl fmt::Display for Usage<'_> {
              light; 2 = Retina/sharper)\n\x20 --bitrate N        live-encoder target bitrate in Mbps \
              (default 12; higher = crisper text,\n\x20                    but the low-latency rate-control \
              caps keyframe growth — for truly sharp\n\x20                    text raise --scale instead, or \
-             use an all-intra mode)\n\x20 --fps N            encoder frame-rate cap (default 30 — a coding \
-             tool, not a game stream;\n\x20                    pass 60 for smoother motion)\n\x20 \
+             use an all-intra mode)\n\x20 --fps N            announced encode rate and governor base \
+             (default 60; the capture\n\x20                    ceiling is twice this)\n\x20 \
              --virtual-display  create a HiDPI 2× virtual display and move each remoted window onto it so \
              it\n\x20                    renders at REAL Retina backing (razor-sharp text) — the only way \
              to get 2×\n\x20                    on a 1× host. DEFAULT OFF. Also via SLOPDESK_VD=1.\n\x20 \
@@ -287,7 +292,7 @@ mod tests {
             "--bitrate",
             "20",
             "--fps",
-            "60",
+            "90",
             "--vd-point-size",
             "2560x1440",
         ])
@@ -297,7 +302,7 @@ mod tests {
         assert_eq!(parsed.arguments.cursor_port, 7001);
         assert!((parsed.arguments.scale - 2.0).abs() < f64::EPSILON);
         assert_eq!(parsed.arguments.bitrate_mbps, 20);
-        assert_eq!(parsed.arguments.fps, 60);
+        assert_eq!(parsed.arguments.fps, 90);
         assert_eq!(parsed.arguments.vd_point_width, 2560);
         assert_eq!(parsed.arguments.vd_point_height, 1440);
     }

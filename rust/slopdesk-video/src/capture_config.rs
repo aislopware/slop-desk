@@ -16,8 +16,11 @@
 //! `ScreenCaptureKit` may hand over a fresh composite: a change landing just after a slot waits out
 //! the rest of it. At a 1× ceiling that beat against the source compositor's commit time cost ~3
 //! fps and clustered ~30 ms double-slot gaps through every scroll; at 2× there were none over a
-//! 14 600-frame session, and the ENCODE rate — and so the bitrate — is untouched either way.
-//! Raising both instead (`--fps 120`) measured WORSE glass-to-glass, by ~18 ms at p50.
+//! 14 600-frame session. The ceiling bounds how many CHANGED frames can reach the encoder, and the
+//! cadence gate engages only when the governor steps below the announced rate, so a source faster
+//! than the announced rate is encoded at up to the ceiling — which is why the announced rate
+//! defaults to the 60 Hz a display source actually produces. Raising both instead (`--fps 120`)
+//! measured WORSE glass-to-glass, by ~18 ms at p50.
 //!
 //! The surface queue defaults to five because the encode runs synchronously on the sample-handler
 //! queue, so one fat scroll-burst frame blocks the next delivery as soon as it over-runs
