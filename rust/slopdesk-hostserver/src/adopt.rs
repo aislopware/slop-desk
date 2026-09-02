@@ -26,11 +26,12 @@
 //! came back adopted after the restart. The cost is that superd keeps reporting this process's
 //! released panes as `attached` for as long as the process lives.
 //!
-//! An ordinary restart hides the whole question behind `exit(0)`. The menu-bar host does not: it
-//! stops and starts in ONE process, and there the next `start()` saw its own panes as another
-//! daemon's and left them running for ever. [`LetGo`] is the note that says otherwise, and it is
-//! injected through [`HostParts`](crate::HostParts) rather than owned by a [`Host`] for exactly the
-//! reason the Swift made it `static`: the point is that it outlives the host that wrote it.
+//! An ordinary restart hides the whole question behind `exit(0)`. The menu-bar host (deleted with
+//! `docs/60` F.9) did not: it stopped and started in ONE process, and there the next `start()` saw
+//! its own panes as another daemon's and left them running for ever. [`LetGo`] is the note that
+//! says otherwise, and it is injected through [`HostParts`](crate::HostParts) rather than owned by
+//! a [`Host`] for exactly the reason the Swift made it `static`: the point is that it outlives the
+//! host that wrote it.
 //!
 //! ## What deliberately did NOT come here
 //! - **The masters.** [`Spawner::adopt`](crate::Spawner) takes the fd back and builds the session;

@@ -37,8 +37,8 @@ fn operator_note(tool: &str) -> String {
     if tool == "slopdesk-hostd" {
         // The sentence that joins the two halves of this mechanism: the install side reports, and
         // hostd's own audit is what actually restarts the three daemons it owns (`crate::Report`).
-        return "quit and relaunch SlopDeskHost.app when convenient; its own audit then restarts the \
-                sidecars it owns"
+        return "restart its launch agent when convenient (`just host-restart` in a checkout); its own \
+                audit then restarts the sidecars it owns"
             .to_owned();
     }
     "restart it when convenient".to_owned()

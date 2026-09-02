@@ -18,7 +18,7 @@ GitHub Actions · aislopware/slop-desk · macos-26 · arm64
         ▼
 brew install aislopware/tap/slopdesk           # the CLI + every sidecar daemon
 brew services start slopdesk                   # superd — REQUIRED, see below
-brew install --cask aislopware/tap/slopdesk    # SlopDesk.app + SlopDeskHost.app
+brew install --cask aislopware/tap/slopdesk    # SlopDesk.app, the client viewer
 ```
 
 `slopdesk-release package` is the single source of truth for *how* a release is built. CI runs it
@@ -350,7 +350,7 @@ it is known before anything is dialled, spawned or ended. That is `slopdesk side
 $ slopdesk sidecars
 TOOL              WAS    NOW    CHANGE     NEXT
 slopdesk          0.4.0  0.5.0  changed    nothing of it is resident; the next invocation is the new one
-slopdesk-hostd    0.4.0  0.5.0  changed    quit and relaunch SlopDeskHost.app when convenient; its own audit then restarts the sidecars it owns
+slopdesk-hostd    0.4.0  0.5.0  changed    restart its launch agent when convenient (`just host-restart` in a checkout); its own audit then restarts the sidecars it owns
 slopdesk-superd   0.1.0  0.1.0  unchanged  unchanged; nothing to do
 slopdesk-screend  0.1.0  0.2.0  changed    it retires itself once idle, and the next verb starts the new one
 slopdesk-dropd    0.1.0  0.2.0  changed    hostd restarts it the next time it starts
@@ -493,7 +493,8 @@ catch.
 
 ## What the tarball ships, and why the list is not shorter
 
-Ten binaries, not three. The three it used to be — `slopdesk`, `slopdesk-hostd`, `slopdesk-ctl` —
+Twelve binaries, not three — the five root-workspace tools and the seven with a workspace of
+their own, which is the table below and the two arrays in `rust/slopdesk-devtools/src/release/tools.rs`. The three it used to be — `slopdesk`, `slopdesk-hostd`, `slopdesk-ctl` —
 produced a host that could not open a pane, because `slopdesk-superd` forks and owns every PTY
 master and hostd has no fallback path (`docs/51`; `HostServiceSupervisor.connected()` says it in
 one line). The other five daemons each cost a feature outright: no screen engine, no file drop, no
@@ -535,10 +536,13 @@ restarts on any exit, so the loser respawned every ten seconds forever. A machin
 this one and a checkout's `com.slopdesk.superd` from `just superd-install` — now settles, with
 whichever booted first keeping the panes. The installer was fixed to the same form.
 
-The **cask depends on the formula** (`packaging/homebrew/Casks/slopdesk.rb`). `SlopDeskHost.app` does not shell out to `slopdesk-hostd`; it
-runs the same `HostServer` in-process, so it needs superd exactly as much as the CLI does, and a
-cask-only install was the same broken host wearing a menu-bar icon. The CLI tools coming along is a
-side effect of declaring the real dependency.
+The **cask depends on the formula** (`packaging/homebrew/Casks/slopdesk.rb`). There is no host app
+to hold the other end any more: F.9 deleted `SlopDeskHost.app`, and the host is the formula's
+`slopdesk-hostd` with superd under it. So the cask ships the client viewer alone, and without the
+formula a cask-only install on the machine somebody codes on is a viewer with nothing to view. The
+ruling that made the dependency real is `docs/decisions/vol-12.md`'s, back when the cask carried a
+menu-bar host that ran `HostServer` in-process; what holds it now is that every daemon and every
+command-line tool is the formula's.
 
 `slopdesk-release package` also pins `--scratch-path .build-release` rather than discovering the output
 directory, and still *searches* it for the SwiftPM binaries instead of assuming a layout: the path
