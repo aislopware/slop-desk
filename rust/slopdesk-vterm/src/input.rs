@@ -26,7 +26,7 @@ use core::fmt;
 pub use libghostty_vt::key::{Key, OptionAsAlt};
 use libghostty_vt::{key, mouse};
 
-use crate::session::{Result, VtError};
+use crate::session::Result;
 
 /// The modifier keys held during an event.
 ///
@@ -312,9 +312,42 @@ impl Keyboard {
             .set_composing(press.composing)
             .set_utf8(press.text)
             .set_unshifted_codepoint(press.unshifted.unwrap_or('\0'));
-        self.encoder
-            .encode_to_vec(&self.event, out)
-            .map_err(VtError::from)
+        append_encoded(out, |spare| self.encoder.encode(&self.event, spare))
+    }
+}
+
+/// Appends one encoding to `out`, growing `out` by the size the engine asks for.
+///
+/// The engine's `encode_to_vec` grows a non-empty vector by `required - spare`, which reserves
+/// against the LENGTH and so leaves the spare capacity short by the bytes already there: a second
+/// keystroke appended after the first fails with `OutOfSpace` for good. Callers that batch several
+/// encodings into one buffer — the recorder, the conformance replay — are exactly that shape, so
+/// the growth is done here, against the spare capacity, and the engine is only ever handed a slice
+/// it said was big enough.
+fn append_encoded(
+    out: &mut Vec<u8>,
+    mut encode: impl FnMut(&mut [u8]) -> core::result::Result<usize, libghostty_vt::Error>,
+) -> Result<()> {
+    let start = out.len();
+    let mut spare = out.capacity() - start;
+    loop {
+        out.resize(start + spare, 0);
+        let (_, room) = out.split_at_mut(start);
+        match encode(room) {
+            Ok(written) => {
+                out.truncate(start + written);
+                return Ok(());
+            },
+            Err(libghostty_vt::Error::OutOfSpace { required }) => {
+                out.truncate(start);
+                out.reserve(required.max(spare + 1));
+                spare = out.capacity() - start;
+            },
+            Err(error) => {
+                out.truncate(start);
+                return Err(error.into());
+            },
+        }
     }
 }
 
@@ -384,9 +417,7 @@ impl Pointer {
                 x: event.x,
                 y: event.y,
             });
-        self.encoder
-            .encode_to_vec(&self.event, out)
-            .map_err(VtError::from)
+        append_encoded(out, |spare| self.encoder.encode(&self.event, spare))
     }
 }
 
@@ -447,6 +478,39 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out, b"a");
+    }
+
+    #[test]
+    fn a_keystroke_appended_behind_earlier_ones_still_fits() {
+        // The shape the recorder and the replay produce: one buffer, many keystrokes. A wide
+        // character behind eleven ASCII ones asks the engine for more room than the spare
+        // capacity holds, and the growth has to be measured against the spare, not the length.
+        let mut keyboard = Keyboard::new().unwrap();
+        let mut out = Vec::new();
+        for _ in 0..11 {
+            keyboard
+                .encode(
+                    &KeyPress {
+                        key: Some(key::Key::K),
+                        text: Some("k"),
+                        unshifted: Some('k'),
+                        ..KeyPress::default()
+                    },
+                    &mut out,
+                )
+                .unwrap();
+        }
+        keyboard
+            .encode(
+                &KeyPress {
+                    key: None,
+                    text: Some("世"),
+                    ..KeyPress::default()
+                },
+                &mut out,
+            )
+            .unwrap();
+        assert_eq!(out, "kkkkkkkkkkk世".as_bytes());
     }
 
     #[test]
