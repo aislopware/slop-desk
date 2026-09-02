@@ -6,6 +6,7 @@ import Foundation
 import OSLog
 import QuartzCore
 import SlopDeskVideoProtocol
+import Synchronization
 #if os(macOS)
 import AppKit
 #elseif canImport(UIKit)
@@ -115,9 +116,14 @@ package final class VideoWindowPipeline {
     /// keeps only the LATEST update+placement (most-recent-wins) and schedules at most ONE flush Task, so
     /// a busy span collapses to a SINGLE fresh apply the instant the actor frees. Mirrors the OUTBOUND
     /// `motionPump` discipline above.
-    private var pendingCursorUpdate: CursorUpdate?
-    private var pendingCursorPlacement: SlopDeskVideoClientSession.CursorPlacement?
-    private var cursorFlushScheduled = false
+    ///
+    /// The slot is a `Mutex` rather than a main-confined pair because the WRITE happens on the
+    /// session actor, before any hop: one `Task` per packet would itself be the pile-up, 120 of
+    /// them a second queued behind a busy main actor, each doing nothing but a store. So the store
+    /// happens where the packet arrives, and the flag decides whether a hop is already in flight —
+    /// at most ONE main-actor task exists per flush, whatever the packet rate.
+    private let pendingCursor = Mutex<(CursorUpdate, SlopDeskVideoClientSession.CursorPlacement)?>(nil)
+    private let cursorFlushScheduled = Atomic<Bool>(false)
 
     /// Whether the host cursor overlay is CURRENTLY visible — the latest applied
     /// ``CursorUpdate/visible`` flag (host reports `true` only while its mouse is inside the captured
@@ -196,7 +202,7 @@ package final class VideoWindowPipeline {
 
     /// Freeze LOCALISATION probes (env-gated `SLOPDESK_VIDEO_DEBUG`). Monotonic gap probes on the two
     /// MAIN-ACTOR paths the user perceives as "the pointer freezes when I click back": the cursor APPLY
-    /// (``coalesceCursor``) and the video RENDER hop. Compared against the SESSION-ACTOR cursor RX probe
+    /// (``flushCursor``) and the video RENDER hop. Compared against the SESSION-ACTOR cursor RX probe
     /// in ``SlopDeskVideoClientSession``: if RX gaps stay SMALL on click-back while these spike, the
     /// freeze is a main-actor BLOCK (the click→focus SwiftUI re-render holding the main thread), which
     /// the coalescer cannot shorten — not a host/network stall.
@@ -487,10 +493,14 @@ package final class VideoWindowPipeline {
                 pacer.submit(buffer)
             },
             applyCursor: { [weak self] update, placement in
-                // COALESCE onto the main actor: store most-recent-wins + schedule at most one flush.
-                // One apply Task per 120 Hz packet piles up behind the click→focus re-render and drains
-                // as a stale burst — the "freeze then lurch".
-                Task { @MainActor in self?.coalesceCursor(update, placement) }
+                // COALESCE before the main actor: store most-recent-wins here, on the session actor,
+                // and schedule at most one flush. One apply Task per 120 Hz packet piles up behind the
+                // click→focus re-render and drains as a stale burst — the "freeze then lurch" — and a
+                // Task that only stores is still a Task in that queue.
+                guard let self else { return }
+                pendingCursor.withLock { $0 = (update, placement) }
+                guard !cursorFlushScheduled.exchange(true, ordering: .acquiringAndReleasing) else { return }
+                Task { @MainActor in self.flushCursor() }
             },
             registerCursorShape: { [weak compositor] image, logicalSize, shapeID in
                 let box = UnsafeTransfer(image)
@@ -738,9 +748,8 @@ package final class VideoWindowPipeline {
         currentRemoteCursorShapeID = nil
         onRemoteCursorChanged?()
         #endif
-        pendingCursorUpdate = nil
-        pendingCursorPlacement = nil
-        cursorFlushScheduled = false
+        pendingCursor.withLock { $0 = nil }
+        cursorFlushScheduled.store(false, ordering: .releasing)
         session = nil
         renderer = nil
         compositor = nil
@@ -990,20 +999,6 @@ package final class VideoWindowPipeline {
 
     // MARK: Cursor-overlay coalescing (inbound)
 
-    /// Stores the freshest cursor update+placement (most-recent-wins) and schedules a SINGLE flush if one
-    /// is not already pending. Called from the per-packet `applyCursor` hook (after a main-actor hop).
-    /// During a busy main-actor span (the click→focus SwiftUI re-render) many of these queue, but each is
-    /// a cheap store and only ONE `flushCursor` is ever queued — so when the actor frees, the overlay
-    /// snaps once to the LATEST position instead of replaying a burst of stale ones.
-    private func coalesceCursor(_ update: CursorUpdate, _ placement: SlopDeskVideoClientSession.CursorPlacement) {
-        dbgNoteCursorApply() // time consecutive MAIN-ACTOR cursor applies (freeze localisation)
-        pendingCursorUpdate = update
-        pendingCursorPlacement = placement
-        guard !cursorFlushScheduled else { return }
-        cursorFlushScheduled = true
-        Task { @MainActor [weak self] in self?.flushCursor() }
-    }
-
     /// Logs a MAIN-ACTOR cursor-APPLY gap > 100 ms. A spike here while the session-actor RX gap
     /// (``SlopDeskVideoClientSession``) stays small means the overlay froze because the main thread was
     /// BLOCKED (the click→focus SwiftUI re-render) — which the coalescer cannot shorten; it only prevents
@@ -1047,15 +1042,16 @@ package final class VideoWindowPipeline {
     /// Applies the latest pending cursor update to the compositor (one CALayer placement). Re-arms by
     /// clearing the scheduled flag so the NEXT packet schedules a fresh flush. No-op once torn down.
     private func flushCursor() {
-        cursorFlushScheduled = false
-        guard let update = pendingCursorUpdate, let placement = pendingCursorPlacement, let compositor else {
-            pendingCursorUpdate = nil
-            pendingCursorPlacement = nil
+        dbgNoteCursorApply() // time consecutive MAIN-ACTOR cursor applies (freeze localisation)
+        cursorFlushScheduled.store(false, ordering: .releasing)
+        let pending = pendingCursor.withLock { slot -> (CursorUpdate, SlopDeskVideoClientSession.CursorPlacement)? in
+            defer { slot = nil }
+            return slot
+        }
+        guard let (update, placement) = pending, let compositor else {
             setServerCursorVisible(false) // torn down / nothing to draw ⇒ no overlay ⇒ show the OS arrow
             return
         }
-        pendingCursorUpdate = nil
-        pendingCursorPlacement = nil
         #if os(macOS)
         // macOS Parsec model: DON'T composite the host POSITION (it lags by an RTT + the outbound
         // motion-coalescing interval). Just track the host's SHAPE + visibility; the backing view
