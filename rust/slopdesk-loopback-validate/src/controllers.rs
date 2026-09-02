@@ -4,6 +4,14 @@
 //! link's and made to print what it decided, so a change in a ladder, a threshold or a smoothing
 //! constant shows up as a changed line rather than as a changed feel.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_video::adaptive_fec::{self, DEFAULT_TIER};
 use slopdesk_video::client_jitter::{
     AdaptiveJitterController, DEFAULT_JITTER_SAFETY, DEFAULT_SHRINK_COOLDOWN_FRAMES, OwdJitterEstimator,
@@ -26,7 +34,7 @@ fn fold_clean(estimate: &mut NetworkEstimate, rtt: i64, unrecovered: u32, jitter
     reason = "one printed trace per component, and the trace IS the deliverable — splitting it hides the \
               order"
 )]
-pub fn run() {
+pub(crate) fn run() {
     println!("\n=== 5. PURE CONTROLLERS on synthetic telemetry (no HW) ===");
 
     // ── NetworkEstimate ──

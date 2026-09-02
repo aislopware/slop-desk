@@ -14,6 +14,14 @@
 //! wobble is an ~8 ms saw with zero net ramp — the rate-independent path texture that any
 //! fixed-threshold delay design misreads as congestion. The armed controller must record ZERO cuts.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_video::encoder_config::DEFAULT_BITRATE;
 use slopdesk_video::packetizer::PacketizeOptions;
 
@@ -33,7 +41,7 @@ const RESTORE_FRAMES: usize = 60;
 
 /// One cut the controller made.
 #[derive(Clone, Copy, Debug)]
-pub struct Cut {
+pub(crate) struct Cut {
     /// Which report it was.
     pub report: usize,
     /// The virtual clock at that report.
@@ -42,7 +50,7 @@ pub struct Cut {
 
 /// One arm's trace.
 #[derive(Clone, Debug, Default)]
-pub struct ArmTrace {
+pub(crate) struct ArmTrace {
     /// Virtual milliseconds from the capacity step to the first cut, or none if it never cut.
     pub onset_to_first_cut_ms: Option<f64>,
     /// Every cut over the whole run.
@@ -57,7 +65,7 @@ pub struct ArmTrace {
 
 /// What the A/B measured.
 #[derive(Clone, Debug, Default)]
-pub struct GradientResult {
+pub(crate) struct GradientResult {
     /// The squeezed capacity, in megabits per second.
     pub capacity_mbps: f64,
     /// Onset to first cut with the gradient disarmed.
@@ -80,10 +88,14 @@ pub struct GradientResult {
     clippy::too_many_lines,
     reason = "the capacity step, the queue it builds and the controller's answer are one feedback loop"
 )]
-pub fn run_arm(gradient_enabled: bool, verbose: bool) -> ArmTrace {
+pub(crate) fn run_arm(gradient_enabled: bool, verbose: bool) -> ArmTrace {
     let mut trace = ArmTrace::default();
     let ceiling = ceiling_bps();
     let ample = ceiling * 10;
+    #[expect(
+        clippy::integer_division,
+        reason = "a share of a bitrate in bits per second; the remainder is under one bit"
+    )]
     let squeeze = ceiling * 40 / 100;
     trace.capacity_mbps = mbps(squeeze);
 
@@ -207,7 +219,7 @@ pub fn run_arm(gradient_enabled: bool, verbose: bool) -> ArmTrace {
 /// fourth frame keeps a ten-second-equivalent arm cheap, and the texture under test is the path's,
 /// not the picture's.
 #[must_use]
-pub fn run_wobble(frames: usize, verbose: bool) -> usize {
+pub(crate) fn run_wobble(frames: usize, verbose: bool) -> usize {
     let ceiling = ceiling_bps();
     let Ok(encoder) = Encoder::create(false, false, DEFAULT_BITRATE) else {
         println!("  gradient-wobble encoder create FAILED");
@@ -300,7 +312,7 @@ pub fn run_wobble(frames: usize, verbose: bool) -> usize {
 
 /// The A/B plus the guard.
 #[must_use]
-pub fn run(verbose: bool) -> GradientResult {
+pub(crate) fn run(verbose: bool) -> GradientResult {
     let mut result = GradientResult::default();
     let off = run_arm(false, verbose);
     let on = run_arm(true, verbose);
@@ -321,8 +333,9 @@ pub fn run(verbose: bool) -> GradientResult {
     }
     result.on_min_cut_spacing_ticks = on
         .cuts
-        .windows(2)
-        .map(|pair| pair[1].report.saturating_sub(pair[0].report))
+        .iter()
+        .zip(on.cuts.iter().skip(1))
+        .map(|(earlier, later)| later.report.saturating_sub(earlier.report))
         .min();
     result.clean_wobble_cuts = run_wobble(600, verbose);
     result

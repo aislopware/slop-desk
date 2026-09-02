@@ -10,6 +10,14 @@
 //!
 //! A, B and C are pure policy traces on a virtual clock. Only D touches the encoder.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_video::decode_admission::DecodeFrontier;
 use slopdesk_video::encoder_config::DEFAULT_BITRATE;
 use slopdesk_video::ltr::{LtrController, RecoveryAction, RecoveryRequestKind};
@@ -21,7 +29,7 @@ use crate::rig::{Encoder, Source};
 
 /// Which admission rule the trace runs under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GateMode {
+pub(crate) enum GateMode {
     /// The delivery-keyed policy.
     V2,
     /// The legacy sent-keyed 500 ms window.
@@ -30,7 +38,7 @@ pub enum GateMode {
 
 /// What one double-loss trace measured.
 #[derive(Clone, Copy, Debug)]
-pub struct TraceResult {
+pub(crate) struct TraceResult {
     /// Virtual milliseconds from the loss to a recovery keyframe decoding.
     pub unfreeze_ms: f64,
     /// How many logical requests the client sent.
@@ -45,7 +53,7 @@ pub struct TraceResult {
     clippy::struct_excessive_bools,
     reason = "each is one independently-measured verdict bit; collapsing them would lose which one failed"
 )]
-pub struct RecoveryIdrResult {
+pub(crate) struct RecoveryIdrResult {
     /// Phase A: the delivery-keyed unfreeze.
     pub v2_unfreeze_ms: f64,
     /// Phase A: the legacy one, on the identical trace.
@@ -152,7 +160,7 @@ impl HostSide {
 
 /// One double-loss recovery trace through the REAL components.
 #[must_use]
-pub fn simulate_double_loss(mode: GateMode, rtt: f64, verbose: bool) -> TraceResult {
+pub(crate) fn simulate_double_loss(mode: GateMode, rtt: f64, verbose: bool) -> TraceResult {
     let one_way = rtt / 2.0;
     let policy = RecoveryPolicy::default();
     let mut escalation = LtrEscalationTracker::new();
@@ -222,7 +230,7 @@ pub fn simulate_double_loss(mode: GateMode, rtt: f64, verbose: bool) -> TraceRes
 
 /// The four-phase scenario.
 #[must_use]
-pub fn run(verbose: bool) -> RecoveryIdrResult {
+pub(crate) fn run(verbose: bool) -> RecoveryIdrResult {
     let mut result = RecoveryIdrResult::default();
 
     // ── Phase A: the double-loss freeze, both rules on the identical trace ──

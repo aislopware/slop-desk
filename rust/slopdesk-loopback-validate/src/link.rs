@@ -10,6 +10,14 @@
 //! Nothing here holds a clock. Every time is the caller's virtual millisecond, which is what makes
 //! two runs of an arm produce the same numbers.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_video::client_jitter::OwdJitterEstimator;
 use slopdesk_video::congestion::{CongestionConfig, LiveCongestionController, is_material_change};
 use slopdesk_video::fragment::FrameFragment;
@@ -23,7 +31,7 @@ use crate::rig::{FPS, HEIGHT, WIDTH};
 
 /// The live budget for the harness geometry — the ceiling every controller starts at.
 #[must_use]
-pub fn ceiling_bps() -> i64 {
+pub(crate) fn ceiling_bps() -> i64 {
     target_bitrate(
         i64::try_from(WIDTH).unwrap_or(1280),
         i64::try_from(HEIGHT).unwrap_or(720),
@@ -39,19 +47,19 @@ pub fn ceiling_bps() -> i64 {
     clippy::cast_precision_loss,
     reason = "the harness frame rate is a small integer, exact in f64"
 )]
-pub fn frame_interval_ms() -> f64 {
+pub(crate) fn frame_interval_ms() -> f64 {
     1000.0 / FPS as f64
 }
 
 /// `clientHoldMs` as the real client computes it: `now − observedAt`, clamped non-negative.
 #[must_use]
-pub fn hold_ms(now: f64, observed_at: f64) -> f64 {
+pub(crate) fn hold_ms(now: f64, observed_at: f64) -> f64 {
     (now - observed_at).max(0.0)
 }
 
 /// The pacer telemetry a report may carry, when the scenario is driving the depth policy.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PacerTelemetry {
+pub(crate) struct PacerTelemetry {
     /// Frames the depth policy classified late in this window.
     pub late_frames: u32,
     /// Present gaps in this window.
@@ -62,7 +70,7 @@ pub struct PacerTelemetry {
 
 /// The client half: the estimators the arriving fragments feed, and the window they accumulate.
 #[derive(Debug, Default)]
-pub struct Client {
+pub(crate) struct Client {
     /// The inter-arrival jitter estimator, fed once per fragment.
     pub owd: OwdJitterEstimator,
     /// The delay-gradient estimator, fed once per strictly-newer frame.
@@ -84,7 +92,7 @@ pub struct Client {
 impl Client {
     /// A client that has seen nothing.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
@@ -94,7 +102,7 @@ impl Client {
     /// This is the exact `SlopDeskVideoClientSession.ingestVideo` cadence: `owd.note` per fragment,
     /// the stamp advanced only on a strictly-newer one, and the trendline admitted at most once per
     /// frame through [`TrendSampler`].
-    pub fn note_arrival(&mut self, parsed: &FrameFragment, arrival_ms: f64, sample_trend: bool) {
+    pub(crate) fn note_arrival(&mut self, parsed: &FrameFragment, arrival_ms: f64, sample_trend: bool) {
         self.owd.note(arrival_ms / 1000.0);
         let stamp = parsed.header.host_send_ts_millis;
         if stamp != 0
@@ -109,7 +117,7 @@ impl Client {
     }
 
     /// Counts one frame the reassembler completed.
-    pub const fn completed(&mut self, frame: &ReassembledFrame) {
+    pub(crate) const fn completed(&mut self, frame: &ReassembledFrame) {
         self.frames = self.frames.saturating_add(1);
         if frame.recovered_via_fec {
             self.fec = self.fec.saturating_add(1);
@@ -117,7 +125,7 @@ impl Client {
     }
 
     /// Counts one frame the reassembler gave up on.
-    pub const fn unrecovered(&mut self) {
+    pub(crate) const fn unrecovered(&mut self) {
         self.unrecovered = self.unrecovered.saturating_add(1);
     }
 
@@ -126,7 +134,7 @@ impl Client {
     /// `now_client_ms` is the client's own virtual clock at the moment it composes — the arrival of
     /// the fragment that triggered the cadence — which is what makes `client_hold_ms` the real
     /// number rather than a host-side guess.
-    pub fn report(
+    pub(crate) fn report(
         &mut self,
         now_client_ms: f64,
         with_trend: bool,
@@ -172,7 +180,7 @@ impl Client {
 
 /// What one delivered fragment did to the reassembler.
 #[derive(Debug)]
-pub enum Delivered {
+pub(crate) enum Delivered {
     /// It completed a frame.
     Frame(Box<ReassembledFrame>),
     /// It aged one out past recovery.
@@ -190,7 +198,7 @@ pub enum Delivered {
     clippy::cast_precision_loss,
     reason = "a frame's fragment count is a small integer, exact in f64"
 )]
-pub fn intra_gap_ms(fragments: usize) -> f64 {
+pub(crate) fn intra_gap_ms(fragments: usize) -> f64 {
     if fragments > 1 {
         8.0 / fragments as f64
     } else {
@@ -203,7 +211,7 @@ pub fn intra_gap_ms(fragments: usize) -> f64 {
 ///
 /// The bytes go through `FrameFragment::encode`/`decode` rather than being handed over as a struct,
 /// so a field that stopped surviving the wire would surface here rather than on a client.
-pub fn ingest(
+pub(crate) fn ingest(
     reassembler: &mut FrameReassembler,
     client: &mut Client,
     fragment: &FrameFragment,
@@ -214,7 +222,7 @@ pub fn ingest(
         return Delivered::Pending;
     };
     client.note_arrival(&parsed, arrival_ms, sample_trend);
-    match reassembler.ingest(&parsed) {
+    match reassembler.ingest(parsed) {
         ReassemblyResult::Completed(frame) => {
             client.completed(&frame);
             Delivered::Frame(Box::new(frame))
@@ -232,7 +240,7 @@ pub fn ingest(
 ///
 /// A frame declared lost mid-burst is reported past the reorder grace rather than at the fragment
 /// that finally aged it out, so a caller that must re-anchor learns about it here.
-pub fn drain_lost(reassembler: &mut FrameReassembler, client: &mut Client) -> usize {
+pub(crate) fn drain_lost(reassembler: &mut FrameReassembler, client: &mut Client) -> usize {
     let mut count = 0;
     while reassembler.next_dropped_frame().is_some() {
         client.unrecovered();
@@ -246,7 +254,7 @@ pub fn drain_lost(reassembler: &mut FrameReassembler, client: &mut Client) -> us
 /// A scenario that handed the struct straight to the host would not be testing the thing every
 /// number in it crosses; anything that stopped surviving the codec would show up here.
 #[must_use]
-pub fn round_trip(report: NetworkStatsReport) -> Option<NetworkStatsReport> {
+pub(crate) fn round_trip(report: NetworkStatsReport) -> Option<NetworkStatsReport> {
     let wire = RecoveryMessage::NetworkStats(report).encode();
     match RecoveryMessage::decode(&wire) {
         Ok(RecoveryMessage::NetworkStats(received)) => Some(received),
@@ -256,7 +264,7 @@ pub fn round_trip(report: NetworkStatsReport) -> Option<NetworkStatsReport> {
 
 /// The host half: the estimate the report folds into, and the controller it ticks.
 #[derive(Debug)]
-pub struct Host {
+pub(crate) struct Host {
     /// The link estimate.
     pub estimate: NetworkEstimate,
     /// The rate controller.
@@ -270,7 +278,7 @@ pub struct Host {
 impl Host {
     /// A host starting at the ceiling, with the delay-gradient cut armed or not.
     #[must_use]
-    pub fn new(ceiling: i64, gradient_cut_enabled: bool) -> Self {
+    pub(crate) fn new(ceiling: i64, gradient_cut_enabled: bool) -> Self {
         Self {
             estimate: NetworkEstimate::new(),
             controller: LiveCongestionController::with_ceiling(
@@ -289,7 +297,7 @@ impl Host {
     /// `host_now_ms` is the host's virtual clock when the report lands, so the round trip is
     /// computed the same clock-skew-free way production does it. `with_trend` off feeds a neutral
     /// trend rather than the report's, which is how an arm holds the gradient out of the loop.
-    pub fn fold(&mut self, received: &NetworkStatsReport, host_now_ms: f64, with_trend: bool) {
+    pub(crate) fn fold(&mut self, received: &NetworkStatsReport, host_now_ms: f64, with_trend: bool) {
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -317,13 +325,13 @@ impl Host {
     }
 
     /// Ticks the controller and records its answer. Answers the new target.
-    pub fn tick(&mut self) -> i64 {
+    pub(crate) fn tick(&mut self) -> i64 {
         self.target = self.controller.decide(&self.estimate, None).target;
         self.target
     }
 
     /// Actuates `target` when the material-change gate admits it. Answers whether it moved.
-    pub fn actuate(&mut self, target: i64) -> bool {
+    pub(crate) fn actuate(&mut self, target: i64) -> bool {
         if is_material_change(
             self.actuated,
             target,
@@ -343,6 +351,6 @@ impl Host {
     clippy::cast_precision_loss,
     reason = "a bitrate in the tens of megabits is exact in f64"
 )]
-pub fn mbps(bps: i64) -> f64 {
+pub(crate) fn mbps(bps: i64) -> f64 {
     bps as f64 / 1_000_000.0
 }

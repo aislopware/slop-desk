@@ -5,6 +5,14 @@
 //! decode. Nothing here is simulated except the loss, and the loss is index-based rather than
 //! random so a run is a repeat of the last one.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_ffi::decoder::DecodeOutcome;
 use slopdesk_video::adaptive_fec;
 use slopdesk_video::encoder_config::DEFAULT_BITRATE;
@@ -17,7 +25,7 @@ use crate::wire::{GROUP, Wire};
 
 /// Everything one base scenario varies.
 #[derive(Clone, Copy, Debug)]
-pub struct Arm {
+pub(crate) struct Arm {
     /// How many frames to push through.
     pub frames: usize,
     /// The FEC tier every frame is packetized at.
@@ -50,7 +58,7 @@ impl Default for Arm {
 /// A frame the encoder could not fit under the hard rate cap produces no output and is counted as
 /// nothing — never a crash, which is the same reading the host takes.
 #[must_use]
-pub fn run(name: &str, arm: Arm) -> ScenarioStats {
+pub(crate) fn run(name: &str, arm: Arm) -> ScenarioStats {
     let mut stats = ScenarioStats::named(name);
     let Ok(encoder) = Encoder::create(arm.full_range, false, DEFAULT_BITRATE) else {
         println!("  [{name}] ENCODER CREATE FAILED");
@@ -134,7 +142,7 @@ fn report(stats: &ScenarioStats) {
 /// decoder accepts, because `VideoToolbox`'s own contract falls back to an IDR when no long-term
 /// reference has been acknowledged.
 #[must_use]
-pub fn run_ltr_hardware(frames: usize) -> ScenarioStats {
+pub(crate) fn run_ltr_hardware(frames: usize) -> ScenarioStats {
     let mut stats = ScenarioStats::named("6. LTR HW (record/ack/refresh)");
     let Ok(encoder) = Encoder::create(false, true, DEFAULT_BITRATE) else {
         println!("  LTR encoder create FAILED");
@@ -290,7 +298,7 @@ fn process(
 /// OFF must NOT recover — there is no parity to recover from — and every other tier must, which is
 /// the whole ladder's contract in one pass.
 #[must_use]
-pub fn tier_sweep(frames: usize) -> Vec<ScenarioStats> {
+pub(crate) fn tier_sweep(frames: usize) -> Vec<ScenarioStats> {
     [1_u8, 2, 3, 4, 0]
         .into_iter()
         .map(|tier| {
@@ -308,7 +316,7 @@ pub fn tier_sweep(frames: usize) -> Vec<ScenarioStats> {
 }
 
 /// The summary table, in the columns the Swift printed.
-pub fn print_summary(all: &[ScenarioStats]) {
+pub(crate) fn print_summary(all: &[ScenarioStats]) {
     println!("\n========================== SUMMARY ==========================");
     println!(
         "{:<34}{:>5}{:>8}{:>7}{:>7}{:>6}{:>6}{:>7}{:>7}",

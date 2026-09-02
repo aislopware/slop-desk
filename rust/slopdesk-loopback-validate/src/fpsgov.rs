@@ -15,6 +15,14 @@
 //! actuated rate, so the over-budget half of the step-down gate never fires. Frame rate is never
 //! sacrificed to weather.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_video::congestion::CongestionConfig;
 use slopdesk_video::encoder_config::DEFAULT_BITRATE;
 use slopdesk_video::fps_governor::{EncodeCadenceGate, FpsGovernor, FpsGovernorConfig, congestion_evidence};
@@ -36,7 +44,7 @@ const HALF_SLOT_MS: f64 = 0.5 / 120.0 * 1000.0;
     clippy::struct_excessive_bools,
     reason = "each is one independently-measured verdict bit; collapsing them would lose which one failed"
 )]
-pub struct CliffResult {
+pub(crate) struct CliffResult {
     /// Governed rates stepped TO during the cliff, in order.
     pub cliff_steps_in_order: Vec<i64>,
     /// Whether every consecutive rung pair was about a step-down hold window apart.
@@ -102,7 +110,7 @@ struct Change {
     clippy::too_many_lines,
     reason = "three phases of one feedback loop; the phase boundaries ARE the scenario"
 )]
-pub fn run_cliff(verbose: bool) -> CliffResult {
+pub(crate) fn run_cliff(verbose: bool) -> CliffResult {
     let mut result = CliffResult::default();
     let ceiling = ceiling_bps();
 
@@ -139,8 +147,7 @@ pub fn run_cliff(verbose: bool) -> CliffResult {
     let phase_frames = [120_usize, 360, 840];
     let capacities = [ceiling * 2, 2_500_000, ceiling * 2];
 
-    for phase in 0..3_usize {
-        let capacity = capacities[phase];
+    for (phase, (&capacity, &frames)) in capacities.iter().zip(&phase_frames).enumerate() {
         if verbose {
             println!(
                 "    ── phase {}  capacity={:.1}Mbps  {} ──",
@@ -153,7 +160,7 @@ pub fn run_cliff(verbose: bool) -> CliffResult {
                 },
             );
         }
-        for _ in 0..phase_frames[phase] {
+        for _ in 0..frames {
             clock_ms += slot_ms;
             #[expect(
                 clippy::cast_precision_loss,
@@ -318,8 +325,8 @@ pub fn run_cliff(verbose: bool) -> CliffResult {
 
     // One rung per step-down hold window — eight ticks of 50 ms — with 350 ms allowing a single
     // report of phase alignment.
-    for pair in cliff_step_times.windows(2) {
-        let spacing = pair[1] - pair[0];
+    for (earlier, later) in cliff_step_times.iter().zip(cliff_step_times.iter().skip(1)) {
+        let spacing = later - earlier;
         result.min_cliff_spacing_ms = result.min_cliff_spacing_ms.min(spacing);
         if spacing < 350.0 {
             result.cliff_spacing_ok = false;
@@ -331,8 +338,7 @@ pub fn run_cliff(verbose: bool) -> CliffResult {
         fps: governed_fps,
     });
     let final_index = changes.len().saturating_sub(2);
-    for (index, pair) in changes.windows(2).enumerate() {
-        let (segment, next) = (pair[0], pair[1]);
+    for (index, (&segment, &next)) in changes.iter().zip(changes.iter().skip(1)).enumerate() {
         if next.ms - segment.ms < 1000.0 {
             continue;
         }
@@ -344,16 +350,16 @@ pub fn run_cliff(verbose: bool) -> CliffResult {
         // Skip the first 200 ms of each plateau: the gate re-anchors there, and the transition
         // frame itself belongs to neither side.
         let admits = within(&admit_times, segment.ms + 200.0, next.ms);
-        for gap in admits.windows(2) {
-            let error = ((gap[1] - gap[0]) - expected).abs();
+        for (earlier, later) in admits.iter().zip(admits.iter().skip(1)) {
+            let error = ((later - earlier) - expected).abs();
             result.worst_cadence_err_ms = result.worst_cadence_err_ms.max(error);
             if error > HALF_SLOT_MS {
                 result.cadence_regular = false;
             }
         }
         let outputs = within(&encode_times, segment.ms + 200.0, next.ms);
-        for gap in outputs.windows(2) {
-            let error = ((gap[1] - gap[0]) - expected).abs();
+        for (earlier, later) in outputs.iter().zip(outputs.iter().skip(1)) {
+            let error = ((later - earlier) - expected).abs();
             result.worst_encode_gap_ms = result.worst_encode_gap_ms.max(error);
             if index == final_index {
                 result.worst_fit_encode_err_ms = result.worst_fit_encode_err_ms.max(error);
@@ -377,7 +383,7 @@ fn within(times: &[f64], from: f64, to: f64) -> Vec<f64> {
 
 /// What the weather arm measured.
 #[derive(Clone, Copy, Debug)]
-pub struct WeatherResult {
+pub(crate) struct WeatherResult {
     /// The lowest governed rate reached.
     pub min_fps: i64,
     /// Whether the governor's congestion arm ever saw the loss.
@@ -402,7 +408,7 @@ impl Default for WeatherResult {
     clippy::too_many_lines,
     reason = "the same one loop as the cliff, with the queue removed — splitting it would hide that"
 )]
-pub fn run_weather(frames: usize, verbose: bool) -> WeatherResult {
+pub(crate) fn run_weather(frames: usize, verbose: bool) -> WeatherResult {
     let mut result = WeatherResult::default();
     let ceiling = ceiling_bps();
 

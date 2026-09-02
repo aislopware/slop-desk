@@ -89,8 +89,14 @@ final class WorkspaceChannelCodecTests: XCTestCase {
     }
 
     func testRosterRejectsAHostileClientCount() {
-        // 0xFFFF clients declared over an empty buffer: rejected by arithmetic, before `reserveCapacity`.
+        // 0xFFFF clients declared over an empty buffer: over `MAX_RECORDS`, so the count itself is
+        // malformed — refused before anything is sized, not after a per-record read runs dry.
         XCTAssertThrowsError(try WorkspacePresenceRoster.decode(Data([0xFF, 0xFF]))) { error in
+            XCTAssertEqual(error as? SlopDeskError, .malformedBody("workspace roster: rejected by the workspace codec"))
+        }
+        // A count UNDER the cap over an empty buffer is the other refusal: the records it promises
+        // never arrive, and that is truncation.
+        XCTAssertThrowsError(try WorkspacePresenceRoster.decode(Data([0x00, 0x10]))) { error in
             XCTAssertEqual(error as? SlopDeskError, .truncated)
         }
     }
@@ -102,9 +108,9 @@ final class WorkspaceChannelCodecTests: XCTestCase {
         payload.append(clientID.dataBytes)
         payload.appendBE(UInt16(80))
         payload.appendBE(UInt16(24))
-        payload.appendBE(UInt16.max) // …claiming 65535 attachments
+        payload.appendBE(UInt16.max) // …claiming 65535 attachments, past `MAX_RECORDS`
         XCTAssertThrowsError(try WorkspacePresenceRoster.decode(payload)) { error in
-            XCTAssertEqual(error as? SlopDeskError, .truncated)
+            XCTAssertEqual(error as? SlopDeskError, .malformedBody("workspace roster: rejected by the workspace codec"))
         }
     }
 

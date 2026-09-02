@@ -14,6 +14,14 @@
 //!   with the cadence hint, not even that.
 //! - E, a motion stop then typing — zero lates, from the idle and density gates.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_video::pacer_depth::{OwdLateConfig, OwdLateDetector, PacerDepthConfig, PacerDepthPolicy};
 
 /// What the five phases measured.
@@ -22,7 +30,7 @@ use slopdesk_video::pacer_depth::{OwdLateConfig, OwdLateDetector, PacerDepthConf
     clippy::struct_excessive_bools,
     reason = "each is one independently-measured verdict bit; collapsing them would lose which one failed"
 )]
-pub struct PacerDepthResult {
+pub(crate) struct PacerDepthResult {
     /// Phase A lates.
     pub clean_lates: u32,
     /// Phase A present gaps.
@@ -124,7 +132,7 @@ impl Rig {
     clippy::too_many_lines,
     reason = "five phases of one policy, each a handful of lines that only read as a sequence"
 )]
-pub fn run(verbose: bool) -> PacerDepthResult {
+pub(crate) fn run(verbose: bool) -> PacerDepthResult {
     let mut result = PacerDepthResult {
         clean_depth_stayed_1: true,
         held_through_burst: true,

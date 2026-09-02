@@ -27,6 +27,7 @@
 use crate::bytes::truncating_u16;
 use crate::fec::ReedSolomonFec;
 use crate::fragment::{Flags, FrameFragment, FrameFragmentHeader, MAX_PAYLOAD_SIZE};
+use crate::reassembler::MAX_FRAGMENTS_PER_FRAME;
 use crate::{adaptive_fec, interleaver};
 
 /// What the host asks of one frame.
@@ -163,6 +164,17 @@ impl VideoPacketizer {
         // Per-frame group size from the tier; `None` is the OFF tier, so no parity at all. Tier 0
         // maps to the codec's configured `k`, keeping the parity shape identical to the plain path.
         let parity_payloads = self.parity_payloads(&payloads, options.fec_tier);
+
+        // The receiver refuses any frame declaring more than `MAX_FRAGMENTS_PER_FRAME` fragments
+        // (`reassembler.rs`), so a frame past it is bytes on the wire that the client will drop
+        // whole — and past `u16::MAX` the index would WRAP, two data fragments would share one
+        // index, and the client would assemble a frame with a hole it cannot see. Refusing here is
+        // the same drop the receiver would make, minus the bandwidth and minus the corruption. The
+        // frame id is still consumed: the host recorded it before packetizing, and a gap is the
+        // loss shape the recovery ladder already handles.
+        if payloads.len() + parity_payloads.len() > MAX_FRAGMENTS_PER_FRAME {
+            return Vec::new();
+        }
 
         let frag_count = truncating_u16(payloads.len() + parity_payloads.len());
 
@@ -508,6 +520,29 @@ mod tests {
                 ..options
             }),
             plain.packetize(&frame, options)
+        );
+    }
+
+    #[test]
+    fn a_frame_the_receiver_would_refuse_is_refused_here_and_still_costs_its_frame_id() {
+        let mut packetizer = VideoPacketizer::new(None);
+        let widest = vec![0_u8; MAX_PAYLOAD_SIZE * crate::reassembler::MAX_FRAGMENTS_PER_FRAME];
+        assert_eq!(
+            packetizer.packetize(&widest, PacketizeOptions::default()).len(),
+            crate::reassembler::MAX_FRAGMENTS_PER_FRAME,
+            "exactly at the cap is exactly what the receiver still takes"
+        );
+        let over = vec![0_u8; MAX_PAYLOAD_SIZE * crate::reassembler::MAX_FRAGMENTS_PER_FRAME + 1];
+        assert!(
+            packetizer
+                .packetize(&over, PacketizeOptions::default())
+                .is_empty(),
+            "one byte over is a frame the receiver would drop whole"
+        );
+        assert_eq!(
+            packetizer.peek_next_frame_id(),
+            2,
+            "the refused frame's id is spent"
         );
     }
 

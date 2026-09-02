@@ -9,6 +9,14 @@
 //! the rate under C quickly, end with a near-drained queue, and not pump back above C over and over
 //! — which is what the knee memory is for.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_video::encoder_config::DEFAULT_BITRATE;
 use slopdesk_video::packetizer::PacketizeOptions;
 
@@ -21,7 +29,7 @@ use crate::wire::Wire;
 
 /// What the run measured.
 #[derive(Clone, Copy, Debug)]
-pub struct BottleneckResult {
+pub(crate) struct BottleneckResult {
     /// The first virtual time the actuated rate reached capacity or below.
     pub converged_at_ms: Option<f64>,
     /// The mean standing queue over the last quarter of the run.
@@ -66,10 +74,14 @@ struct Sample {
     clippy::too_many_lines,
     reason = "the queue, the delay it produces and the controller's answer to it are one feedback loop"
 )]
-pub fn run(frames: usize, verbose: bool) -> BottleneckResult {
+pub(crate) fn run(frames: usize, verbose: bool) -> BottleneckResult {
     let mut result = BottleneckResult::default();
     let ceiling = ceiling_bps();
     // Between the controller's own floor fraction and the ceiling, so convergence is reachable.
+    #[expect(
+        clippy::integer_division,
+        reason = "a share of a bitrate in bits per second; the remainder is under one bit"
+    )]
     let capacity = ceiling * 55 / 100;
     result.capacity_mbps = mbps(capacity);
 
@@ -176,6 +188,7 @@ pub fn run(frames: usize, verbose: bool) -> BottleneckResult {
         }
     }
 
+    #[expect(clippy::integer_division, reason = "the floor is the bound being computed")]
     let tail_start = samples.len().saturating_sub((samples.len() / 4).max(1));
     let tail = samples.get(tail_start..).unwrap_or_default();
     if !tail.is_empty() {
@@ -190,11 +203,16 @@ pub fn run(frames: usize, verbose: bool) -> BottleneckResult {
     if let Some(converged) = result.converged_at_ms {
         // A re-bash is a post-convergence crossing from at-or-under the pumping boundary to above
         // it — the transition, not the level, because a rate that simply stayed high is one event.
+        #[expect(
+            clippy::integer_division,
+            reason = "a share of a bitrate in bits per second; the remainder is under one bit"
+        )]
         let boundary = capacity * 135 / 100;
         result.rebash_count = samples
-            .windows(2)
-            .filter(|pair| {
-                pair[0].ms >= converged && pair[0].actuated <= boundary && pair[1].actuated > boundary
+            .iter()
+            .zip(samples.iter().skip(1))
+            .filter(|(before, after)| {
+                before.ms >= converged && before.actuated <= boundary && after.actuated > boundary
             })
             .count();
     }

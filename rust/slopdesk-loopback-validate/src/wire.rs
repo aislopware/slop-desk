@@ -5,6 +5,14 @@
 //! `decode` — the REAL codec, not a hand-off of the struct — so a field that stopped surviving the
 //! round trip would show here rather than on a client.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_video::fec::ReedSolomonFec;
 use slopdesk_video::fragment::FrameFragment;
 use slopdesk_video::loopback::{LossModel, ScenarioStats, should_drop};
@@ -13,11 +21,11 @@ use slopdesk_video::reassembler::{FrameReassembler, ReassembledFrame, Reassembly
 
 /// The FEC group size every scenario packetizes at. Five data shards per group, which is what the
 /// tier ladder's group sizes are expressed against.
-pub const GROUP: usize = 5;
+pub(crate) const GROUP: usize = 5;
 
 /// What one frame's fragments made of themselves on the far side.
 #[derive(Debug, Default)]
-pub struct Transmitted {
+pub(crate) struct Transmitted {
     /// Frames the reassembler completed, in the order it completed them.
     pub completed: Vec<ReassembledFrame>,
     /// Frames it gave up on during this batch.
@@ -27,7 +35,7 @@ pub struct Transmitted {
 /// The two halves of the wire, kept together because a packetizer and a reassembler built with
 /// different parity counts would silently stop recovering.
 #[derive(Debug)]
-pub struct Wire {
+pub(crate) struct Wire {
     /// The send half.
     pub packetizer: VideoPacketizer,
     /// The receive half.
@@ -44,7 +52,7 @@ impl Wire {
     /// `parity` of one is the XOR-equivalent single-hole codec — byte-identical on the wire to what
     /// shipped before Reed-Solomon existed. Two or more recovers that many holes per group.
     #[must_use]
-    pub fn new(parity: usize) -> Self {
+    pub(crate) fn new(parity: usize) -> Self {
         Self {
             packetizer: VideoPacketizer::new(Some(ReedSolomonFec::new(GROUP, parity))),
             // Two frame ids of reorder grace — the client's own default, and what decides how long
@@ -58,12 +66,12 @@ impl Wire {
 
     /// The frame id the NEXT packetize will assign, read before it to mirror the host's LTR map.
     #[must_use]
-    pub const fn peek_frame_id(&self) -> u32 {
+    pub(crate) const fn peek_frame_id(&self) -> u32 {
         self.packetizer.peek_next_frame_id()
     }
 
     /// Fragments one frame and advances the host stamp by one frame interval.
-    pub fn packetize(&mut self, avcc: &[u8], options: PacketizeOptions) -> Vec<FrameFragment> {
+    pub(crate) fn packetize(&mut self, avcc: &[u8], options: PacketizeOptions) -> Vec<FrameFragment> {
         let stamped = PacketizeOptions {
             host_send_ts_millis: self.host_ts,
             ..options
@@ -78,7 +86,7 @@ impl Wire {
     /// The feedback scenarios run a virtual clock the wire knows nothing about, and the host stamp
     /// is what the round-trip estimate is computed from — so those pass their own clock rather than
     /// the fixed frame-interval advance [`Self::packetize`] applies.
-    pub fn packetize_stamped(&mut self, avcc: &[u8], options: PacketizeOptions) -> Vec<FrameFragment> {
+    pub(crate) fn packetize_stamped(&mut self, avcc: &[u8], options: PacketizeOptions) -> Vec<FrameFragment> {
         self.packetizer.packetize(avcc, options)
     }
 
@@ -88,7 +96,7 @@ impl Wire {
     /// reassembler gives up on mid-batch is reported in [`Transmitted::dropped`] rather than only
     /// counted, because a caller that must re-anchor learns about it HERE — the deferred queue
     /// [`Self::drain_dropped`] holds only the ones aged out past the reorder grace.
-    pub fn transmit(
+    pub(crate) fn transmit(
         &mut self,
         fragments: &[FrameFragment],
         loss: LossModel,
@@ -107,7 +115,7 @@ impl Wire {
             let Ok(parsed) = FrameFragment::decode(&fragment.encode()) else {
                 continue;
             };
-            match self.reassembler.ingest(&parsed) {
+            match self.reassembler.ingest(parsed) {
                 ReassemblyResult::Completed(frame) => {
                     stats.reassembled = stats.reassembled.saturating_add(1);
                     if frame.recovered_via_fec {
@@ -129,7 +137,7 @@ impl Wire {
     ///
     /// The reassembler defers a drop past its reorder grace, so a frame declared lost mid-burst is
     /// reported here rather than at the fragment that finally aged it out.
-    pub fn drain_dropped(&mut self, stats: &mut ScenarioStats) -> usize {
+    pub(crate) fn drain_dropped(&mut self, stats: &mut ScenarioStats) -> usize {
         let mut count = 0;
         while self.reassembler.next_dropped_frame().is_some() {
             stats.frames_dropped = stats.frames_dropped.saturating_add(1);
@@ -140,7 +148,7 @@ impl Wire {
 
     /// Drains the deferred drop queue without counting it, for a scenario whose whole-frame loss is
     /// deliberate and already accounted for.
-    pub fn discard_dropped(&mut self) {
+    pub(crate) fn discard_dropped(&mut self) {
         while self.reassembler.next_dropped_frame().is_some() {}
     }
 }

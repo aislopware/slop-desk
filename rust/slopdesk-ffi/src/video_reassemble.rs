@@ -252,7 +252,7 @@ pub unsafe extern "C" fn slopdesk_video_reassembler_ingest(
     );
     match held
         .reassembler
-        .ingest(&FrameFragment::new(header, bytes.to_vec()))
+        .ingest(FrameFragment::new(header, bytes.to_vec()))
     {
         ReassemblyResult::Incomplete => VERDICT_INCOMPLETE,
         ReassemblyResult::Completed(frame) => {

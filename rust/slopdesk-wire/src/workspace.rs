@@ -662,6 +662,11 @@ impl WorkspacePresenceRoster {
     pub fn decode(payload: &[u8]) -> Result<Self> {
         let mut reader = ByteReader::new(payload);
         let client_count = usize::from(reader.read_u16()?);
+        if client_count > Self::MAX_RECORDS {
+            return Err(WireError::malformed(
+                "workspace roster: client count over the cap",
+            ));
+        }
         if client_count * ROSTER_CLIENT_MIN_BYTES > reader.bytes_remaining() {
             return Err(WireError::Truncated);
         }
@@ -691,6 +696,9 @@ impl WorkspacePresenceRoster {
             });
         }
         let pane_count = usize::from(reader.read_u16()?);
+        if pane_count > Self::MAX_RECORDS {
+            return Err(WireError::malformed("workspace roster: pane count over the cap"));
+        }
         if pane_count * ROSTER_PANE_MIN_BYTES > reader.bytes_remaining() {
             return Err(WireError::Truncated);
         }
@@ -700,6 +708,11 @@ impl WorkspacePresenceRoster {
             let resolved_cols = reader.read_u16()?;
             let resolved_rows = reader.read_u16()?;
             let attachment_count = usize::from(reader.read_u16()?);
+            if attachment_count > Self::MAX_RECORDS {
+                return Err(WireError::malformed(
+                    "workspace roster: attachment count over the cap",
+                ));
+            }
             if attachment_count * ROSTER_ATTACHMENT_BYTES > reader.bytes_remaining() {
                 return Err(WireError::Truncated);
             }
@@ -973,20 +986,38 @@ mod tests {
 
     #[test]
     fn a_hostile_roster_count_is_refused_before_it_can_drive_an_allocation() {
-        // 0xFFFF clients declared in front of nothing.
-        assert_eq!(
+        // 0xFFFF clients declared in front of nothing: over the cap, refused as malformed before
+        // the byte arithmetic is even asked.
+        assert!(matches!(
             WorkspacePresenceRoster::decode(&[0xFF, 0xFF]),
+            Err(WireError::MalformedBody(_))
+        ));
+        // Sixteen clients — under the cap — declared in front of nothing: short.
+        assert_eq!(
+            WorkspacePresenceRoster::decode(&[0x00, 0x10]),
             Err(WireError::Truncated)
         );
         // Zero clients, then 0xFFFF panes.
-        assert_eq!(
+        assert!(matches!(
             WorkspacePresenceRoster::decode(&[0, 0, 0xFF, 0xFF]),
+            Err(WireError::MalformedBody(_))
+        ));
+        // Zero clients, then sixteen panes in front of nothing.
+        assert_eq!(
+            WorkspacePresenceRoster::decode(&[0, 0, 0x00, 0x10]),
             Err(WireError::Truncated)
         );
-        // One real pane whose attachment count is a lie.
+        // One real pane whose attachment count is a lie — over the cap, then under it but short.
         let mut body = vec![0, 0, 0, 1];
         body.extend_from_slice(&ID_C);
         body.extend_from_slice(&[0, 0, 0, 0, 0xFF, 0xFF]);
+        assert!(matches!(
+            WorkspacePresenceRoster::decode(&body),
+            Err(WireError::MalformedBody(_))
+        ));
+        let mut body = vec![0, 0, 0, 1];
+        body.extend_from_slice(&ID_C);
+        body.extend_from_slice(&[0, 0, 0, 0, 0x00, 0x10]);
         assert_eq!(WorkspacePresenceRoster::decode(&body), Err(WireError::Truncated));
     }
 

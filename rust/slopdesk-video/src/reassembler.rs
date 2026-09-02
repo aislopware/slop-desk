@@ -492,7 +492,7 @@ impl FrameReassembler {
     /// Drops of older, now-hopeless frames are surfaced separately through
     /// [`Self::next_dropped_frame`], so completing a newer frame never hides an older loss. If the
     /// ingested fragment's own frame became hopeless, `Dropped` is returned directly.
-    pub fn ingest(&mut self, fragment: &FrameFragment) -> ReassemblyResult {
+    pub fn ingest(&mut self, fragment: FrameFragment) -> ReassemblyResult {
         let header = fragment.header;
         let frame_id = header.frame_id;
 
@@ -560,14 +560,10 @@ impl FrameReassembler {
             // order.
             let slot = parity_index.saturating_sub(boundary);
             // Duplicates overwrite; only a first arrival counts.
-            if entry.parity.insert(slot, fragment.payload.clone()).is_none() {
+            if entry.parity.insert(slot, fragment.payload).is_none() {
                 entry.note_parity_arrived(slot);
             }
-        } else if entry
-            .data
-            .insert(header.frag_index, fragment.payload.clone())
-            .is_none()
-        {
+        } else if entry.data.insert(header.frag_index, fragment.payload).is_none() {
             entry.note_data_arrived(usize::from(header.frag_index));
         }
 
@@ -842,9 +838,9 @@ mod tests {
         let mut reassembler = FrameReassembler::new(None, 2);
         let last = fragments.len() - 1;
         for fragment in &fragments[..last] {
-            assert_eq!(reassembler.ingest(fragment), ReassemblyResult::Incomplete);
+            assert_eq!(reassembler.ingest(fragment.clone()), ReassemblyResult::Incomplete);
         }
-        assert_eq!(completed(reassembler.ingest(&fragments[last])), frame);
+        assert_eq!(completed(reassembler.ingest(fragments[last].clone())), frame);
     }
 
     #[test]
@@ -855,7 +851,7 @@ mod tests {
         let mut reassembler = FrameReassembler::new(None, 2);
         let mut rebuilt = None;
         for fragment in &fragments {
-            if let ReassemblyResult::Completed(done) = reassembler.ingest(fragment) {
+            if let ReassemblyResult::Completed(done) = reassembler.ingest(fragment.clone()) {
                 rebuilt = Some(done.avcc);
             }
         }
@@ -869,10 +865,10 @@ mod tests {
         let mut reassembler = FrameReassembler::new(None, 2);
         let last = fragments.len() - 1;
         for fragment in &fragments[..last] {
-            reassembler.ingest(fragment);
-            reassembler.ingest(fragment); // twice
+            reassembler.ingest(fragment.clone());
+            reassembler.ingest(fragment.clone()); // twice
         }
-        assert_eq!(completed(reassembler.ingest(&fragments[last])), frame);
+        assert_eq!(completed(reassembler.ingest(fragments[last].clone())), frame);
     }
 
     #[test]
@@ -880,7 +876,10 @@ mod tests {
         let fragments = packetized(&[], None, PacketizeOptions::default());
         assert_eq!(fragments.len(), 1);
         let mut reassembler = FrameReassembler::new(None, 2);
-        assert_eq!(completed(reassembler.ingest(&fragments[0])), Vec::<u8>::new());
+        assert_eq!(
+            completed(reassembler.ingest(fragments[0].clone())),
+            Vec::<u8>::new()
+        );
     }
 
     #[test]
@@ -895,7 +894,7 @@ mod tests {
             if index == 0 || index == 5 {
                 continue;
             }
-            if let ReassemblyResult::Completed(done) = reassembler.ingest(fragment) {
+            if let ReassemblyResult::Completed(done) = reassembler.ingest(fragment.clone()) {
                 assert!(done.recovered_via_fec, "a filled hole is a FEC recovery");
                 rebuilt = Some(done.avcc);
             }
@@ -913,7 +912,7 @@ mod tests {
             if index == 0 || index == 1 {
                 continue; // both in group 0, beyond a single-parity budget
             }
-            reassembler.ingest(fragment);
+            reassembler.ingest(fragment.clone());
         }
         // Nothing is lost until the frontier proves it: a NEWER frame has to arrive first.
         assert_eq!(reassembler.next_dropped_frame(), None);
@@ -923,7 +922,7 @@ mod tests {
         for fragment in &next {
             let mut bumped = fragment.clone();
             bumped.header.frame_id = 1;
-            reassembler.ingest(&bumped);
+            reassembler.ingest(bumped.clone());
         }
         assert_eq!(reassembler.next_dropped_frame(), Some(0));
     }
@@ -939,18 +938,18 @@ mod tests {
 
         let mut reassembler = FrameReassembler::new(Some(codec), 2);
         for fragment in &fragments[1..data_count] {
-            reassembler.ingest(fragment); // frame 0, missing data 0 and its parity
+            reassembler.ingest(fragment.clone()); // frame 0, missing data 0 and its parity
         }
         // A newer frame arrives; the grace keeps frame 0 alive.
         let mut newer = fragments[0].clone();
         newer.header.frame_id = 1;
-        reassembler.ingest(&newer);
+        reassembler.ingest(newer);
         assert_eq!(reassembler.next_dropped_frame(), None, "still inside the grace");
 
         // The late parity lands and repairs the hole.
         let mut parity = fragments[data_count].clone();
         parity.header.frame_id = 0;
-        assert_eq!(completed(reassembler.ingest(&parity)), frame);
+        assert_eq!(completed(reassembler.ingest(parity)), frame);
     }
 
     #[test]
@@ -961,7 +960,7 @@ mod tests {
         let data_count = fragments.len() - 1;
         let mut reassembler = FrameReassembler::new(Some(codec), 2);
         for fragment in &fragments[1..data_count] {
-            reassembler.ingest(fragment);
+            reassembler.ingest(fragment.clone());
         }
         // Newer frames that COMPLETE, so nothing but frame 0 is ever a drop candidate.
         let tick = packetized(&frame_of(10), Some(codec), PacketizeOptions::default());
@@ -969,7 +968,7 @@ mod tests {
             for fragment in &tick {
                 let mut newer = fragment.clone();
                 newer.header.frame_id = frame_id;
-                reassembler.ingest(&newer);
+                reassembler.ingest(newer.clone());
             }
         }
         assert_eq!(reassembler.next_dropped_frame(), Some(0));
@@ -986,9 +985,9 @@ mod tests {
         let fragments = packetized(&frame, None, PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(None, 2);
         for fragment in &fragments {
-            reassembler.ingest(fragment);
+            reassembler.ingest(fragment.clone());
         }
-        assert_eq!(reassembler.ingest(&fragments[0]), ReassemblyResult::Stale);
+        assert_eq!(reassembler.ingest(fragments[0].clone()), ReassemblyResult::Stale);
     }
 
     #[test]
@@ -998,7 +997,7 @@ mod tests {
 
         fragment.header.frag_count = 0;
         assert_eq!(
-            reassembler.ingest(&fragment),
+            reassembler.ingest(fragment.clone()),
             ReassemblyResult::Stale,
             "zero fragments"
         );
@@ -1008,7 +1007,7 @@ mod tests {
             fragment.header.frag_count = MAX_FRAGMENTS_PER_FRAME as u16 + 1;
         }
         assert_eq!(
-            reassembler.ingest(&fragment),
+            reassembler.ingest(fragment.clone()),
             ReassemblyResult::Stale,
             "an absurd count"
         );
@@ -1016,7 +1015,7 @@ mod tests {
         fragment.header.frag_count = 4;
         fragment.header.frag_index = 4;
         assert_eq!(
-            reassembler.ingest(&fragment),
+            reassembler.ingest(fragment),
             ReassemblyResult::Stale,
             "index past the count"
         );
@@ -1029,16 +1028,16 @@ mod tests {
         let frame = frame_of(1181 * 3);
         let fragments = packetized(&frame, None, PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(None, 2);
-        reassembler.ingest(&fragments[0]);
+        reassembler.ingest(fragments[0].clone());
 
         let mut liar = fragments[1].clone();
         liar.header.frag_count = 2;
-        assert_eq!(reassembler.ingest(&liar), ReassemblyResult::Stale);
+        assert_eq!(reassembler.ingest(liar), ReassemblyResult::Stale);
 
         // The frame is untouched and still completes on the honest fragments.
         let mut rebuilt = None;
         for fragment in &fragments[1..] {
-            if let ReassemblyResult::Completed(done) = reassembler.ingest(fragment) {
+            if let ReassemblyResult::Completed(done) = reassembler.ingest(fragment.clone()) {
                 rebuilt = Some(done.avcc);
             }
         }
@@ -1053,17 +1052,17 @@ mod tests {
         let frame = frame_of(100);
         let fragments = packetized(&frame, None, PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(None, 2);
-        reassembler.ingest(&fragments[0]);
+        reassembler.ingest(fragments[0].clone());
 
         let mut far = fragments[0].clone();
         far.header.frame_id = frontier_jump() + 99;
-        assert_eq!(reassembler.ingest(&far), ReassemblyResult::Stale);
+        assert_eq!(reassembler.ingest(far), ReassemblyResult::Stale);
         assert_eq!(reassembler.frontier_jump_rejected_count(), 1);
 
         // The frontier never moved, so an ordinary next frame is still accepted.
         let mut ordinary = fragments[0].clone();
         ordinary.header.frame_id = 1;
-        assert_ne!(reassembler.ingest(&ordinary), ReassemblyResult::Stale);
+        assert_ne!(reassembler.ingest(ordinary), ReassemblyResult::Stale);
     }
 
     #[test]
@@ -1071,18 +1070,18 @@ mod tests {
         let frame = frame_of(100);
         let fragments = packetized(&frame, None, PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(None, 2);
-        reassembler.ingest(&fragments[0]);
+        reassembler.ingest(fragments[0].clone());
 
         let base = frontier_jump() + 1000;
         for offset in 0..RESYNC_STREAK - 1 {
             let mut jumped = fragments[0].clone();
             jumped.header.frame_id = base + u32::try_from(offset).expect("a small offset");
-            assert_eq!(reassembler.ingest(&jumped), ReassemblyResult::Stale);
+            assert_eq!(reassembler.ingest(jumped.clone()), ReassemblyResult::Stale);
         }
         let mut accepted = fragments[0].clone();
         accepted.header.frame_id = base + u32::try_from(RESYNC_STREAK).expect("a small streak");
         assert_ne!(
-            reassembler.ingest(&accepted),
+            reassembler.ingest(accepted),
             ReassemblyResult::Stale,
             "a stream that keeps proposing nearby ids really moved"
         );
@@ -1093,7 +1092,7 @@ mod tests {
         let frame = frame_of(100);
         let fragments = packetized(&frame, None, PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(None, 2);
-        reassembler.ingest(&fragments[0]);
+        reassembler.ingest(fragments[0].clone());
 
         let base = frontier_jump() + 1000;
         for step in 0..RESYNC_STREAK * 2 {
@@ -1106,7 +1105,7 @@ mod tests {
                 base + RESYNC_CLUSTER_WINDOW * 10
             };
             assert_eq!(
-                reassembler.ingest(&jumped),
+                reassembler.ingest(jumped.clone()),
                 ReassemblyResult::Stale,
                 "step {step}"
             );
@@ -1124,11 +1123,11 @@ mod tests {
             if index == 0 || index == 1 {
                 continue; // two holes in group 0: FEC cannot fix it
             }
-            reassembler.ingest(fragment);
+            reassembler.ingest(fragment.clone());
         }
         let mut newer = fragments[2].clone();
         newer.header.frame_id = 1;
-        reassembler.ingest(&newer);
+        reassembler.ingest(newer);
 
         assert_eq!(reassembler.next_needs_retransmit(), Some((0, vec![0, 1])));
         assert_eq!(reassembler.next_dropped_frame(), None, "held for the retransmit");
@@ -1146,10 +1145,10 @@ mod tests {
         let fragments = packetized(&frame, Some(codec), PacketizeOptions::default());
         let mut reassembler = FrameReassembler::new(Some(codec), 0);
         reassembler.enable_retransmit(4, 1); // a one-fragment NACK budget
-        reassembler.ingest(&fragments[2]);
+        reassembler.ingest(fragments[2].clone());
         let mut newer = fragments[2].clone();
         newer.header.frame_id = 1;
-        reassembler.ingest(&newer);
+        reassembler.ingest(newer);
 
         assert_eq!(reassembler.next_needs_retransmit(), None, "too big to request");
         assert_eq!(
@@ -1172,11 +1171,11 @@ mod tests {
         reassembler.enable_retransmit(4, 64);
         // Deliver nothing but parity, then advance the frontier.
         for fragment in &fragments[data_count..] {
-            reassembler.ingest(fragment);
+            reassembler.ingest(fragment.clone());
         }
         let mut newer = fragments[data_count].clone();
         newer.header.frame_id = 1;
-        reassembler.ingest(&newer);
+        reassembler.ingest(newer);
 
         let (frame_id, missing) = reassembler.next_needs_retransmit().expect("a request");
         assert_eq!(frame_id, 0);
@@ -1197,11 +1196,11 @@ mod tests {
 
         let mut reassembler = FrameReassembler::new(Some(codec), 0);
         for fragment in &fragments[1..] {
-            reassembler.ingest(fragment);
+            reassembler.ingest(fragment.clone());
         }
         let mut newer = fragments[1].clone();
         newer.header.frame_id = 1;
-        reassembler.ingest(&newer);
+        reassembler.ingest(newer);
         assert_eq!(reassembler.next_dropped_frame(), Some(0));
     }
 
@@ -1218,7 +1217,7 @@ mod tests {
             let mut reassembler = FrameReassembler::new(Some(codec), 2);
             let mut rebuilt = None;
             for fragment in &fragments {
-                if let ReassemblyResult::Completed(done) = reassembler.ingest(fragment) {
+                if let ReassemblyResult::Completed(done) = reassembler.ingest(fragment.clone()) {
                     rebuilt = Some(done.avcc);
                 }
             }
@@ -1237,7 +1236,7 @@ mod tests {
             if index < 3 {
                 continue; // three holes in the one group, exactly the budget
             }
-            if let ReassemblyResult::Completed(done) = reassembler.ingest(fragment) {
+            if let ReassemblyResult::Completed(done) = reassembler.ingest(fragment.clone()) {
                 rebuilt = Some(done.avcc);
             }
         }
@@ -1258,7 +1257,7 @@ mod tests {
         let mut reassembler = FrameReassembler::new(None, 2);
         let mut done = None;
         for fragment in &fragments {
-            if let ReassemblyResult::Completed(frame) = reassembler.ingest(fragment) {
+            if let ReassemblyResult::Completed(frame) = reassembler.ingest(fragment.clone()) {
                 done = Some(frame);
             }
         }
@@ -1302,7 +1301,7 @@ mod tests {
             for fragment in &fragments {
                 let mut wrapped = fragment.clone();
                 wrapped.header.frame_id = frame_id;
-                if let ReassemblyResult::Completed(done) = reassembler.ingest(&wrapped) {
+                if let ReassemblyResult::Completed(done) = reassembler.ingest(wrapped.clone()) {
                     rebuilt = Some((frame_id, done.avcc));
                 }
             }

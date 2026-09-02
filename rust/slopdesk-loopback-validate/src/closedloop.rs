@@ -12,6 +12,14 @@
 //! under stress and back afterwards. The clock is a virtual 16 ms per frame and the loss is chosen
 //! by fragment index, so a run is a repeat of the last one.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_video::adaptive_fec;
 use slopdesk_video::client_jitter::{
     AdaptiveJitterController, DEFAULT_JITTER_SAFETY, DEFAULT_SHRINK_COOLDOWN_FRAMES,
@@ -35,7 +43,7 @@ use crate::wire::Wire;
     reason = "each flag switches one adaptation off independently — that IS the A/B matrix this scenario \
               sweeps"
 )]
-pub struct Arm {
+pub(crate) struct Arm {
     /// Frames per phase.
     pub frames_per_phase: usize,
     /// Whether the congestion controller actuates the encoder.
@@ -72,7 +80,7 @@ impl Default for Arm {
 
 /// What the three phases measured.
 #[derive(Clone, Debug)]
-pub struct ClosedLoopResult {
+pub(crate) struct ClosedLoopResult {
     /// Mean actuated rate per phase, in megabits per second.
     pub phase_avg_bitrate_mbps: Vec<f64>,
     /// The heaviest FEC tier each phase reached.
@@ -103,6 +111,24 @@ pub struct ClosedLoopResult {
     pub end_bitrate_mbps: f64,
     /// The lowest target the controller reached during the adverse phase.
     pub adverse_trough_mbps: f64,
+}
+
+impl ClosedLoopResult {
+    /// Whether every per-phase series holds one entry per phase.
+    ///
+    /// [`run`] hands back a `Default` — every series EMPTY — when the encoder or the source cannot
+    /// be created, and the suite indexes three phases; reading an empty arm as a FAIL is the
+    /// difference between a printed verdict and an index panic.
+    #[must_use]
+    pub(crate) const fn has_every_phase(&self) -> bool {
+        const PHASES: usize = 3;
+        self.phase_avg_bitrate_mbps.len() == PHASES
+            && self.phase_peak_tier.len() == PHASES
+            && self.phase_peak_depth.len() == PHASES
+            && self.phase_peak_depth_v2.len() == PHASES
+            && self.phase_unrecovered.len() == PHASES
+            && self.phase_avg_enc_bytes.len() == PHASES
+    }
 }
 
 impl Default for ClosedLoopResult {
@@ -177,7 +203,7 @@ const fn jitter_ms(arm: &Arm, phase: usize, frame: usize) -> f64 {
     reason = "one closed loop, told in the order the bytes travel; splitting it would hide the reflex that \
               IS the test"
 )]
-pub fn run(arm: Arm) -> ClosedLoopResult {
+pub(crate) fn run(arm: Arm) -> ClosedLoopResult {
     let mut result = ClosedLoopResult::default();
     let ceiling = ceiling_bps();
 
@@ -210,6 +236,8 @@ pub fn run(arm: Arm) -> ClosedLoopResult {
     let mut depth_policy = PacerDepthPolicy::new(PacerDepthConfig::default(), true);
 
     let mut tier = arm.fixed_tier.unwrap_or(adaptive_fec::DEFAULT_TIER);
+    #[expect(clippy::integer_division, reason = "the floor is the bound being computed")]
+    let second_half = arm.frames_per_phase / 2;
     let mut clock_ms = 0.0_f64;
     let mut global_fragment = 0_usize;
     let mut recovery_pending = false;
@@ -287,7 +315,7 @@ pub fn run(arm: Arm) -> ClosedLoopResult {
                     if casualties > 0 {
                         window.unrecovered = window.unrecovered.saturating_add(casualties);
                         recovery_pending = true;
-                        if phase == 1 && frame >= arm.frames_per_phase / 2 {
+                        if phase == 1 && frame >= second_half {
                             adverse_second_half = adverse_second_half.saturating_add(casualties);
                         }
                     }
@@ -330,6 +358,11 @@ pub fn run(arm: Arm) -> ClosedLoopResult {
                     result.adverse_trough_mbps = result.adverse_trough_mbps.min(mbps(host.target));
                 }
                 if arm.verbose && window.enc_count.is_multiple_of(15) {
+                    #[expect(
+                        clippy::integer_division,
+                        reason = "a mean byte count for the readout; the remainder is under one byte"
+                    )]
+                    let bytes_per_frame = window.enc_bytes / window.enc_count.max(1);
                     println!(
                         "    f{frame:<3} loss={:.3} unrec/win={}  tier={tier}({})  bitrate={:.1}Mbps  \
                          depth={depth}  enc~{}B",
@@ -337,7 +370,7 @@ pub fn run(arm: Arm) -> ClosedLoopResult {
                         received.unrecovered,
                         slopdesk_video::loopback::tier_description(tier),
                         mbps(host.actuated),
-                        window.enc_bytes / window.enc_count.max(1),
+                        bytes_per_frame,
                     );
                 }
             }
@@ -365,9 +398,7 @@ pub fn run(arm: Arm) -> ClosedLoopResult {
 
     result.adverse_unrec_second_half = adverse_second_half;
     result.end_bitrate_mbps = mbps(host.target);
-    if result.phase_avg_bitrate_mbps.len() == 3 {
-        let clean = result.phase_avg_bitrate_mbps[0];
-        let adverse = result.phase_avg_bitrate_mbps[1];
+    if let &[clean, adverse, _] = result.phase_avg_bitrate_mbps.as_slice() {
         result.bitrate_fell_in_adverse = adverse < clean - 0.05;
         result.bitrate_recovered_after = result.adverse_trough_mbps.is_finite()
             && result.end_bitrate_mbps > result.adverse_trough_mbps + 0.05;

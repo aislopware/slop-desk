@@ -177,27 +177,27 @@ impl ReedSolomonFec {
 
     /// Encodes one group's `m` parity shards, appended in rank order.
     ///
-    /// Frames each up-to-`k` data shard (length-prefixed) ONCE into a reusable buffer, zero-pads to
-    /// the group's widest member `W`, then for each parity row folds `coeff * framed_shard` into a
-    /// single reused `W`-wide accumulator (zeroed between ranks, so no stale byte leaks — the
-    /// result is bit-identical to a fresh per-rank buffer).
+    /// Frames each up-to-`k` data shard (length-prefixed) ONCE, then for each parity row folds
+    /// `coeff * framed_shard` straight into that row's own `W`-wide zeroed shard, `W` being the
+    /// group's widest member. One allocation per parity shard — the one the caller keeps — and no
+    /// copy: an accumulator reused across ranks would have to be cloned into `out` at each rank,
+    /// which is the same allocation plus a memcpy.
     ///
     /// `tables` is the frame's `m × k` coefficient tables, row-major, from
     /// [`parity_m`](Self::parity_m).
     fn encode_group(&self, group: &[&[u8]], m: usize, tables: &[gf256::MulTable], out: &mut Vec<Vec<u8>>) {
         let framed: Vec<Vec<u8>> = group.iter().map(|shard| length_prefixed(shard)).collect();
         let width = framed.iter().map(Vec::len).max().unwrap_or(0);
-        let mut acc = vec![0_u8; width];
         for rank in 0..m {
-            acc.fill(0);
+            let mut parity = vec![0_u8; width];
             for (j, shard) in framed.iter().enumerate() {
                 // The table for parity `rank` over data shard `j`. A short final group holds fewer
                 // than k shards; only the present ones contribute.
                 if let Some(table) = tables.get(rank * self.group_size + j) {
-                    table.add_scaled(shard, &mut acc);
+                    table.add_scaled(shard, &mut parity);
                 }
             }
-            out.push(acc.clone());
+            out.push(parity);
         }
     }
 

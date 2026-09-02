@@ -157,6 +157,20 @@ pub const fn group_size(tier: u8, default_group_size: usize) -> Option<usize> {
     }
 }
 
+/// The ladder's widest parity count — the burst tier's.
+///
+/// Named so the bound below can name it: `rs_matrix::parity_rows` asserts `k + m <= 256`, and on
+/// the DECODE side `m` comes from a tier byte the network wrote while `k` comes from the codec's
+/// group size. `multi_loss::resolve_group_size` clamps `k` to [`multi_loss::K_MAX`], so the widest
+/// shape a hostile fragment can ask the matrix for is `K_MAX + BURST_PARITY` — and that sum is
+/// checked here, at compile time, rather than trusted to stay small when somebody raises one side.
+pub const BURST_PARITY: usize = 5;
+
+const _: () = assert!(
+    multi_loss::K_MAX + BURST_PARITY <= 255,
+    "the widest decode-side group must fit GF(2^8); `fec.rs` promises recover never panics"
+);
+
 /// Maps a wire tier to the parity-shards-per-group `m` for this frame.
 ///
 /// TOTAL over every `u8`, same reason as [`group_size`]. With the production single-parity codec
@@ -180,7 +194,7 @@ pub const fn parity_count(tier: u8, default_m: usize) -> usize {
         match tier {
             PARITY_TIER_CLEAN => return 2,
             PARITY_TIER_NORMAL => return 3,
-            PARITY_TIER_BURST => return 5,
+            PARITY_TIER_BURST => return BURST_PARITY,
             _ => {},
         }
     }

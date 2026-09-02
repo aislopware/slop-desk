@@ -105,36 +105,39 @@ impl BlobAssembler {
             return None;
         }
         let key = (chunk.kind, chunk.id);
-        let mut partial = if let Some(existing) = self.partials.get(&key) {
-            if existing.chunk_count != chunk.chunk_count {
-                // Chunks of one blob disagreeing about how many there are is corruption or a
-                // hostile sender: the whole blob goes, and the requester's re-request fetches it
-                // whole from the host's cache of encoded bytes.
-                self.discard(key);
-                return None;
-            }
-            existing.clone()
-        } else {
+        if let Some(existing) = self.partials.get(&key)
+            && existing.chunk_count != chunk.chunk_count
+        {
+            // Chunks of one blob disagreeing about how many there are is corruption or a hostile
+            // sender: the whole blob goes, and the requester's re-request fetches it whole from
+            // the host's cache of encoded bytes.
+            self.discard(key);
+            return None;
+        }
+        if !self.partials.contains_key(&key) {
             if self.partials.len() >= Self::MAX_PARTIAL_BLOBS
                 && let Some(&oldest) = self.insertion_order.first()
             {
                 self.discard(oldest);
             }
             self.insertion_order.push(key);
-            Partial {
+            self.partials.insert(key, Partial {
                 chunk_count: chunk.chunk_count,
                 meta_a: chunk.meta_a,
                 meta_b: chunk.meta_b,
                 received: BTreeMap::new(),
-            }
-        };
+            });
+        }
 
+        // In place: the partial holds every chunk received so far, and a copy of it per arrival
+        // would make a C-chunk blob cost C² bytes of memcpy instead of its own size.
+        let partial = self.partials.get_mut(&key)?;
         partial.received.insert(chunk.chunk_index, chunk.bytes);
         if partial.received.len() != usize::from(chunk.chunk_count) {
-            self.partials.insert(key, partial);
             return None;
         }
-        self.discard(key);
+        let partial = self.partials.remove(&key)?;
+        self.insertion_order.retain(|&held| held != key);
 
         let mut assembled = Vec::new();
         for index in 0..chunk.chunk_count {

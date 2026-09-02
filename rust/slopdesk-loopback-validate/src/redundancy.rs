@@ -9,6 +9,14 @@
 //! drives a REAL encoder, because "one recovery encode" has to mean one encoded frame rather than
 //! one increment of a counter.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use std::collections::BTreeSet;
 
 use slopdesk_video::decode_admission::DecodeFrontier;
@@ -26,7 +34,7 @@ use crate::rig::{Encoder, Source};
 
 /// What one request-loss timing arm measured.
 #[derive(Clone, Copy, Debug)]
-pub struct LossArmResult {
+pub(crate) struct LossArmResult {
     /// Virtual milliseconds from the loss to the recovery keyframe decoding at the client.
     pub freeze_ms: f64,
     /// Logical requests the client composed.
@@ -56,7 +64,7 @@ impl Default for LossArmResult {
 
 /// How one timing arm is configured.
 #[derive(Clone, Debug)]
-pub struct LossArm {
+pub(crate) struct LossArm {
     /// Client redundancy. One is a single unprotected send.
     pub copies: usize,
     /// Which copy indices of the INITIAL request the wire eats.
@@ -88,7 +96,7 @@ struct InFlight {
     clippy::too_many_lines,
     reason = "one episode: the send plan, the host's absorption and the client's clock are one trace"
 )]
-pub fn run_loss_arm(arm: &LossArm) -> LossArmResult {
+pub(crate) fn run_loss_arm(arm: &LossArm) -> LossArmResult {
     let mut result = LossArmResult::default();
     let one_way = arm.rtt / 2.0;
     let frame_interval = frame_interval_ms() / 1000.0;
@@ -293,7 +301,7 @@ fn host_receive(
 
 /// What one straddle arm measured.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct DedupArmResult {
+pub(crate) struct DedupArmResult {
     /// Refresh encodes issued on the REAL encoder — the latch-drain count.
     pub recovery_encodes: usize,
     /// Frames the encoder emitted.
@@ -311,7 +319,7 @@ pub struct DedupArmResult {
 /// two copies inside one frame, but the post-boundary copy RE-LATCHES — and without the host's
 /// deduper that encodes a SECOND refresh for one loss, because nothing else gates the refresh path.
 #[must_use]
-pub fn run_dedup_arm(dedup_on: bool, verbose: bool) -> DedupArmResult {
+pub(crate) fn run_dedup_arm(dedup_on: bool, verbose: bool) -> DedupArmResult {
     let mut result = DedupArmResult::default();
     // A zero window is the kill switch: no request is ever a duplicate.
     let mut deduper = RecoveryRequestDeduper::new(
@@ -348,8 +356,9 @@ pub fn run_dedup_arm(dedup_on: bool, verbose: bool) -> DedupArmResult {
             reason = "a frame index inside one arm is a small integer, exact in f64"
         )]
         let boundary = index as f64 * frame_interval;
-        while arrival_index < arrivals.len() && arrivals[arrival_index] <= boundary {
-            let at = arrivals[arrival_index];
+        while let Some(&at) = arrivals.get(arrival_index)
+            && at <= boundary
+        {
             arrival_index = arrival_index.saturating_add(1);
             if !matches!(route_recovery(&wire, true), RecoveryDecision::RefreshLtr { .. }) {
                 continue;
@@ -392,7 +401,7 @@ pub fn run_dedup_arm(dedup_on: bool, verbose: bool) -> DedupArmResult {
 
 /// What the whole component measured.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct RedundancyResult {
+pub(crate) struct RedundancyResult {
     /// One copy, and it is lost — what ships today.
     pub baseline: LossArmResult,
     /// Three copies, and the first is lost.
@@ -424,7 +433,7 @@ impl Default for LossArm {
 
 /// Drives every arm.
 #[must_use]
-pub fn run(verbose: bool) -> RedundancyResult {
+pub(crate) fn run(verbose: bool) -> RedundancyResult {
     RedundancyResult {
         baseline: run_loss_arm(&LossArm {
             copies: 1,
@@ -463,7 +472,7 @@ pub fn run(verbose: bool) -> RedundancyResult {
 }
 
 /// The shared verdict line, printed by the suite and by the standalone flag alike.
-pub fn print_verdict(result: &RedundancyResult) {
+pub(crate) fn print_verdict(result: &RedundancyResult) {
     let redundant = result.redundant.freeze_ms <= result.baseline.freeze_ms * 0.6
         && result.redundant.host_duplicates_dropped >= 1
         && result.redundant.host_admitted == 1;
@@ -489,6 +498,6 @@ pub fn print_verdict(result: &RedundancyResult) {
 }
 
 /// How a verdict's bit prints.
-pub const fn yes(value: bool) -> &'static str {
+pub(crate) const fn yes(value: bool) -> &'static str {
     if value { "YES" } else { "no" }
 }

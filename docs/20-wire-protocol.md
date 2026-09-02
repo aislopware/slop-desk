@@ -1292,7 +1292,7 @@ without parsing the payload.
 |------|------|-----------|---------|
 | 0 | `snapshot` | `0` / current | `[u32 entryCount][entry…]` |
 | 1 | `diff` | subscriber's **acked** / current | `[u32 setCount][entry…][u32 delCount][key…]` |
-| 2 | `presence` | `0` / `0` | roster — **full replace, never diffed** |
+| 2 | `presence` | `0` / `0` | roster — **full replace, never diffed**. `[u16 clientCount][client…][u16 paneCount][pane…]`, each pane carrying its own `[u16 attachmentCount]`; every count is capped at `WorkspacePresenceRoster::MAX_RECORDS` (4096) — the encoder truncates to it and the decoder refuses a larger count as `malformedBody` BEFORE sizing anything, so a hostile `0xFFFF` cannot drive an allocation |
 | 3 | `intentResult` | `0` / `0` | `[16B intentID][u8 status]` — 0 applied · 1 rejectedStale · 2 rejectedInvalid · 3 unknownOp · 4 rejectedNotFound |
 | 4 | `reset` | `0` / `0`, `epoch` = the NEW epoch | empty |
 

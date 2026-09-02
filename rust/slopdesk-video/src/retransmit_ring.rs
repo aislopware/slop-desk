@@ -7,15 +7,16 @@
 //! the byte ceiling, because a send history is exactly the kind of structure a long stream would
 //! otherwise grow without bound.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::fragment::FrameFragment;
 
 /// The bounded per-frame datagram history.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetransmitRing {
-    /// Frame ids in record order, oldest first.
-    order: Vec<u32>,
+    /// Frame ids in record order, oldest first. A deque because the steady state evicts the
+    /// front once per recorded frame, and a `Vec` would shift the whole history to do it.
+    order: VecDeque<u32>,
     /// The datagrams each recorded frame went out as.
     by_frame: BTreeMap<u32, Vec<Vec<u8>>>,
     /// The bytes currently held.
@@ -31,7 +32,7 @@ impl RetransmitRing {
     #[must_use]
     pub const fn new(max_frames: usize, max_bytes: usize) -> Self {
         Self {
-            order: Vec::new(),
+            order: VecDeque::new(),
             by_frame: BTreeMap::new(),
             total_bytes: 0,
             max_frames: if max_frames > 1 { max_frames } else { 1 },
@@ -47,7 +48,7 @@ impl RetransmitRing {
 
     /// How many frames are currently held.
     #[must_use]
-    pub const fn frame_count(&self) -> usize {
+    pub fn frame_count(&self) -> usize {
         self.order.len()
     }
 
@@ -61,12 +62,14 @@ impl RetransmitRing {
             return;
         }
         self.total_bytes += datagrams.iter().map(Vec::len).sum::<usize>();
-        self.order.push(frame_id);
+        self.order.push_back(frame_id);
         self.by_frame.insert(frame_id, datagrams);
         while self.order.len() > self.max_frames
             || (self.total_bytes > self.max_bytes && self.order.len() > 1)
         {
-            let evicted = self.order.remove(0);
+            let Some(evicted) = self.order.pop_front() else {
+                break;
+            };
             if let Some(gone) = self.by_frame.remove(&evicted) {
                 self.total_bytes -= gone.iter().map(Vec::len).sum::<usize>();
             }

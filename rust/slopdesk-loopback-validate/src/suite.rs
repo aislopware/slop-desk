@@ -5,6 +5,14 @@
 //! public because the standalone flags print the SAME block — a verdict that reads differently
 //! depending on how it was invoked would be two verdicts.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_video::congestion::CongestionConfig;
 use slopdesk_video::loopback::tier_description;
 
@@ -16,7 +24,11 @@ use crate::{bottleneck, closedloop, fpsgov, gradient, idr, pacer, redundancy};
     clippy::too_many_lines,
     reason = "the suite IS its printed order: nine sections and the verdict that reads them"
 )]
-pub fn run(frames_per_phase: usize) {
+#[expect(
+    clippy::indexing_slicing,
+    reason = "the closed-loop arm reports one entry per phase, and there are three phases"
+)]
+pub(crate) fn run(frames_per_phase: usize) {
     println!(
         "\n=== CLOSED-LOOP ADAPTATION :: full reflex through REAL components (in-process lossy transport) \
          ==="
@@ -34,6 +46,12 @@ pub fn run(frames_per_phase: usize) {
         verbose: true,
         ..closedloop::Arm::default()
     });
+    if !on.has_every_phase() {
+        println!(
+            "  FAIL: the closed-loop arm reported fewer than three phases — encoder or source create failed"
+        );
+        return;
+    }
     println!(
         "    BITRATE  Mbps/phase  : clean={:.1}  adverse={:.1}  recovery={:.1}",
         on.phase_avg_bitrate_mbps[0], on.phase_avg_bitrate_mbps[1], on.phase_avg_bitrate_mbps[2],
@@ -73,6 +91,12 @@ pub fn run(frames_per_phase: usize) {
         fixed_tier: Some(0),
         ..closedloop::Arm::default()
     });
+    if !fec_pinned.has_every_phase() {
+        println!(
+            "  FAIL: the closed-loop arm reported fewer than three phases — encoder or source create failed"
+        );
+        return;
+    }
     // The fair window is STEADY STATE — the second half of the adverse phase. It excludes the
     // adaptive run's climb-from-OFF transient, which the pinned baseline never pays, and by then
     // the adaptive tier has settled at its heaviest.
@@ -97,6 +121,12 @@ pub fn run(frames_per_phase: usize) {
         congest_rtt_in_adverse: false,
         ..closedloop::Arm::default()
     });
+    if !weather.has_every_phase() {
+        println!(
+            "  FAIL: the closed-loop arm reported fewer than three phases — encoder or source create failed"
+        );
+        return;
+    }
     let weather_held = !weather.bitrate_fell_in_adverse;
     println!(
         "    BITRATE  Mbps/phase  : clean={:.1}  weather={:.1}  after={:.1}",
@@ -277,7 +307,7 @@ pub fn run(frames_per_phase: usize) {
 }
 
 /// The four recovery-IDR phase lines, shared by section [F] and `--recovery-idr`.
-pub fn print_idr_phases(result: &idr::RecoveryIdrResult) {
+pub(crate) fn print_idr_phases(result: &idr::RecoveryIdrResult) {
     let speedup = if result.v2_unfreeze_ms > 0.0 {
         result.legacy_unfreeze_ms / result.v2_unfreeze_ms
     } else {
@@ -308,7 +338,7 @@ pub fn print_idr_phases(result: &idr::RecoveryIdrResult) {
 }
 
 /// The recovery-IDR verdict line.
-pub fn print_idr_verdict(result: &idr::RecoveryIdrResult) {
+pub(crate) fn print_idr_verdict(result: &idr::RecoveryIdrResult) {
     let bypass = result.v2_second_request_granted
         && result.v2_unfreeze_ms < 250.0
         && result.legacy_unfreeze_ms > 500.0;
@@ -328,7 +358,7 @@ pub fn print_idr_verdict(result: &idr::RecoveryIdrResult) {
 }
 
 /// The three delay-gradient measurement lines.
-pub fn print_gradient_phases(result: &gradient::GradientResult) {
+pub(crate) fn print_gradient_phases(result: &gradient::GradientResult) {
     println!(
         "    capacity step={:.1}Mbps  onset→first-cut: OFF={}  ON={}  (trend OVERUSING at ON cut={})",
         result.capacity_mbps,
@@ -351,7 +381,7 @@ pub fn print_gradient_phases(result: &gradient::GradientResult) {
 }
 
 /// The delay-gradient verdict line.
-pub fn print_gradient_verdict(result: &gradient::GradientResult) {
+pub(crate) fn print_gradient_verdict(result: &gradient::GradientResult) {
     let hold_ticks = CongestionConfig::default().cut_hold_ticks as usize;
     let faster = result
         .on_onset_to_first_cut_ms
@@ -373,7 +403,7 @@ pub fn print_gradient_verdict(result: &gradient::GradientResult) {
 }
 
 /// The adaptive-pacer-depth verdict line, shared by the suite and `--pacer-depth`.
-pub fn print_pacer_verdict(result: &pacer::PacerDepthResult) {
+pub(crate) fn print_pacer_verdict(result: &pacer::PacerDepthResult) {
     let clean = result.clean_lates == 0 && result.clean_gaps == 0 && result.clean_depth_stayed_1;
     let promote =
         result.promote_after_onset_ms.unwrap_or(f64::INFINITY) <= 1500.0 && result.held_through_burst;
@@ -399,7 +429,7 @@ pub fn print_pacer_verdict(result: &pacer::PacerDepthResult) {
 }
 
 /// The three recovery-redundancy measurement lines.
-pub fn print_redundancy_phases(result: &RedundancyResult) {
+pub(crate) fn print_redundancy_phases(result: &RedundancyResult) {
     let better = if result.baseline.freeze_ms > 0.0 {
         (1.0 - result.redundant.freeze_ms / result.baseline.freeze_ms) * 100.0
     } else {

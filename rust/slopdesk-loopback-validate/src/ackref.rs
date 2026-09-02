@@ -13,6 +13,14 @@
 //! The fifteen arms answer those, plus the one that decides it: low-motion content, where a genuine
 //! P-frame collapses to a few kilobytes and a secretly-intra stream does not.
 
+// `redundant_pub_crate` wants `pub` on every item in this private module, and rustc's
+// `unreachable_pub` — denied by the manifest — refuses exactly that. The conflict is clippy's own,
+// recorded in its documentation; the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use std::collections::BTreeSet;
 
 use slopdesk_ffi::decoder::DecodeOutcome;
@@ -31,7 +39,7 @@ use crate::wire::{GROUP, Wire};
     reason = "each flag is one independent knob of the arm matrix, and folding them into enums would name \
               combinations that do not exist"
 )]
-pub struct ArmSpec {
+pub(crate) struct ArmSpec {
     /// The label the arm prints under.
     pub name: &'static str,
     /// How many frames to push through.
@@ -61,7 +69,7 @@ impl ArmSpec {
     /// The plain previous-frame chain on a clean link — the shape everything else is measured
     /// against.
     #[must_use]
-    pub const fn baseline(name: &'static str, frames: usize) -> Self {
+    pub(crate) const fn baseline(name: &'static str, frames: usize) -> Self {
         Self {
             name,
             frames,
@@ -79,7 +87,7 @@ impl ArmSpec {
 
     /// The ack-referenced chain at a given acknowledgement lag.
     #[must_use]
-    pub fn ack_ref(name: &'static str, frames: usize, ack_lag_frames: usize) -> Self {
+    pub(crate) fn ack_ref(name: &'static str, frames: usize, ack_lag_frames: usize) -> Self {
         Self {
             ack_ref: true,
             ack_lag_frames,
@@ -90,7 +98,7 @@ impl ArmSpec {
 
 /// What one arm measured.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ArmResult {
+pub(crate) struct ArmResult {
     /// Frames the encoder emitted.
     pub encoded: usize,
     /// Of those, how many it marked intra.
@@ -126,7 +134,7 @@ pub struct ArmResult {
 impl ArmResult {
     /// Mean bytes per sparse refresh frame.
     #[must_use]
-    pub const fn avg_refresh_bytes(&self) -> usize {
+    pub(crate) const fn avg_refresh_bytes(&self) -> usize {
         match self.refresh_bytes_total.checked_div(self.refresh_count) {
             Some(mean) => mean,
             None => 0,
@@ -139,7 +147,7 @@ impl ArmResult {
     /// attachment, which mislabels an LTR-refresh P-frame as a keyframe, so a per-class average
     /// would compare two different populations.
     #[must_use]
-    pub const fn avg_frame_bytes(&self) -> usize {
+    pub(crate) const fn avg_frame_bytes(&self) -> usize {
         match (self.delta_bytes_total + self.kf_bytes_total).checked_div(self.encoded) {
             Some(mean) => mean,
             None => 0,
@@ -162,7 +170,9 @@ fn drops_frame(spec: &ArmSpec, index: usize) -> bool {
         return false;
     };
     // A mid-cycle frame, so the seed keyframe is never the one that dies.
-    every > 0 && index > 0 && index % every == every / 2
+    #[expect(clippy::integer_division, reason = "the floor is the bound being computed")]
+    let mid_cycle = every / 2;
+    every > 0 && index > 0 && index % every == mid_cycle
 }
 
 /// One acknowledgement the simulated round trip has not yet delivered.
@@ -180,7 +190,7 @@ struct PendingAck {
     clippy::too_many_lines,
     reason = "one arm is one loop: the ack feedback, the loss shape and the picture check are the same pass"
 )]
-pub fn run_arm(spec: &ArmSpec) -> ArmResult {
+pub(crate) fn run_arm(spec: &ArmSpec) -> ArmResult {
     let mut result = ArmResult::default();
     let Ok(encoder) = Encoder::create(false, spec.ack_ref, DEFAULT_BITRATE) else {
         println!("  [{}] ENCODER CREATE FAILED", spec.name);
@@ -371,7 +381,7 @@ const fn mark(ok: bool) -> &'static str {
     clippy::too_many_lines,
     reason = "fifteen arms and their verdicts; every line is one measured claim about this hardware"
 )]
-pub fn run_probe(frames: usize) {
+pub(crate) fn run_probe(frames: usize) {
     println!(
         "=== ACK-REF probe :: per-frame ForceLTRRefresh (Parsec ack-referenced encoding) on REAL HW ==="
     );
