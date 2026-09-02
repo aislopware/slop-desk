@@ -1274,3 +1274,22 @@ Two consequences of taking the mouse, both paid rather than deferred: the Mac ba
 cursor rect over the DOCUMENT rows only, since the accessory rows are a list to click at rather than
 text to place a caret in; and it forwards `menu(for:)` to the pane, because taking the mouse would
 otherwise take the pane's context menu away with it.
+
+## The encode-load pacer steps only on a sustained overrun (2026-09-02)
+
+`EncodeLoadPacer` halved the frame rate whenever the encode-wall average passed 85% of the frame
+budget for three frames, and stepped back after 45 clean ones. Measured on 2026-09-02 (`docs/71`):
+the submit wall at 1280×800 is 11–13 ms with spikes to 19, so at `--fps 60` the 14.2 ms threshold
+tripped on spikes while the stream was keeping up (zero backlog drops), and the rate oscillated
+60 → 30 → 60 every few seconds — 45–133 send gaps a span, 49–54 fps delivered, worse than the
+nominal `--fps 30` it was meant to beat. Every display session runs at that 60 fps floor.
+
+Ruling: the threshold is the budget itself (`down_fraction` 1.0 — the backlog only builds when an
+encode outlasts its interval), the window is thirty consecutive over-budget frames, and the step up
+waits 120 clean ones. A burst now costs its few ragged drops; a step is reserved for an encoder
+that cannot keep up. Three `--fps 60` runs after: 0 steps, 1–3 gaps, 59 fps. The ladder itself
+(clean divisors, 60 → 30 → 20 → 15) stands — they are the only judder-free rungs on a 60 Hz source.
+
+Recorded and NOT yet changed, in `docs/71` §3: the `--fps 30` default is nominal (the cadence gate
+never engages at the base rate, so the stream already runs at 57–59), and vsync-on reads the
+cleanest cadence at +6 ms. Those two defaults are the next ruling, not this one.

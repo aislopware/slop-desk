@@ -482,3 +482,4 @@
 - [The code-server / baguette bump, and the tail it carries (2026-09-01)](decisions/vol-14.md#the-code-server-baguette-bump-and-the-tail-it-carries-2026-09-01)
 - [The per-block context menu, and the two keys a block wears (2026-09-01)](decisions/vol-14.md#the-per-block-context-menu-and-the-two-keys-a-block-wears-2026-09-01)
 - [The four files that could blow an agent's context, cut at their own seams (2026-09-01)](decisions/vol-14.md#the-four-files-that-could-blow-an-agents-context-cut-at-their-own-seams-2026-09-01)
+- [The encode-load pacer steps only on a sustained overrun (2026-09-02)](decisions/vol-14.md#the-encode-load-pacer-steps-only-on-a-sustained-overrun-2026-09-02)

@@ -576,18 +576,22 @@ pub struct EncodeLoadPacerConfig {
     /// The weight on a fresh encode-time sample — a short memory, because encode spikes are bursty.
     pub alpha: f64,
     /// Step DOWN a rung once the encode-time average reaches this fraction of the CURRENT rung's
-    /// budget. Below one, so the backlog is caught building rather than only once it saturates.
+    /// budget. ONE: the backlog builds only when an encode takes longer than the interval it has,
+    /// and a threshold under the interval steps a stream that was keeping up. The 2026-09-02
+    /// cadence runs (`docs/71`) measured an 11–13 ms submit wall at 1280×800 — 72% of the 60 fps
+    /// budget, zero backlog drops — and the earlier 0.85 tripped on its spikes, halving the rate.
     pub down_fraction: f64,
     /// Step UP a rung once the encode-time average — measured at the current, COARSER rung, so on
     /// LARGER frames — still fits this fraction of the next rung's tighter budget. Since the higher
     /// rung's frames are smaller, fitting the bigger ones under its budget is a conservative,
     /// biased-safe projection, mirroring the link governor's step-up fit.
     pub up_fraction: f64,
-    /// Consecutive over-budget encoded frames before a step down — fast, so a scroll burst is
-    /// caught within a few frames.
+    /// Consecutive over-budget encoded frames before a step down — half a second at 60 fps. A
+    /// step halves the rate for seconds, so it answers a SUSTAINED overrun; a burst that clears in
+    /// a few frames costs a few ragged drops, which is the cheaper of the two.
     pub down_ticks: u32,
     /// Consecutive headroom frames before a step up — slow, because a step is a visible cadence
-    /// change.
+    /// change, and long enough that a rate that steps up is not about to step down again.
     pub up_ticks: u32,
     /// Frames to fold before any action — the cold-start guard.
     pub warmup_ticks: u32,
@@ -597,10 +601,10 @@ impl Default for EncodeLoadPacerConfig {
     fn default() -> Self {
         Self {
             alpha: 0.25,
-            down_fraction: 0.85,
+            down_fraction: 1.0,
             up_fraction: 0.90,
-            down_ticks: 3,
-            up_ticks: 45,
+            down_ticks: 30,
+            up_ticks: 120,
             warmup_ticks: 8,
         }
     }
@@ -1107,10 +1111,37 @@ mod tests {
         assert_eq!(pacer.current_fps(), 60);
     }
 
+    /// The measured trap: a submit wall at three quarters of the budget, with the spikes a busy
+    /// display puts on it, is a stream that is keeping up — the backlog never builds — and the
+    /// pacer must leave it alone. The earlier 0.85 threshold and three-frame window stepped this
+    /// stream 60 → 30 and back, every few seconds.
+    #[test]
+    fn a_wall_inside_the_budget_never_steps_however_spiky() {
+        let mut pacer = EncodeLoadPacer::new(60, EncodeLoadPacerConfig::default(), 15);
+        for frame in 0..2000 {
+            let millis = if frame % 40 < 10 { 19.0 } else { 12.0 };
+            pacer.note(millis, false);
+        }
+        assert_eq!(pacer.current_fps(), 60);
+    }
+
+    /// An overrun that clears inside the window costs its ragged frames and nothing more.
+    #[test]
+    fn a_short_over_run_is_ridden_out_rather_than_stepped() {
+        let mut pacer = EncodeLoadPacer::new(60, EncodeLoadPacerConfig::default(), 15);
+        for _ in 0..100 {
+            pacer.note(8.0, false);
+        }
+        for _ in 0..20 {
+            pacer.note(25.0, false); // over budget, but for a third of a second
+        }
+        assert_eq!(pacer.current_fps(), 60);
+    }
+
     #[test]
     fn a_sustained_encode_over_run_steps_the_rate_down_a_clean_divisor() {
         let mut pacer = EncodeLoadPacer::new(60, EncodeLoadPacerConfig::default(), 15);
-        for _ in 0..40 {
+        for _ in 0..60 {
             pacer.note(25.0, false); // over the 60 fps budget, inside the 30 fps one
         }
         assert_eq!(pacer.current_fps(), 30);
@@ -1133,7 +1164,7 @@ mod tests {
     #[test]
     fn the_pacer_steps_back_up_only_on_sustained_headroom_for_the_tighter_budget() {
         let mut pacer = EncodeLoadPacer::new(60, EncodeLoadPacerConfig::default(), 15);
-        for _ in 0..40 {
+        for _ in 0..60 {
             pacer.note(25.0, false);
         }
         assert_eq!(pacer.current_fps(), 30);
@@ -1142,6 +1173,14 @@ mod tests {
             pacer.note(15.4, false);
         }
         assert_eq!(pacer.current_fps(), 30);
+        for _ in 0..100 {
+            pacer.note(4.0, false);
+        }
+        assert_eq!(
+            pacer.current_fps(),
+            30,
+            "a hundred clean frames are not yet sustained"
+        );
         for _ in 0..100 {
             pacer.note(4.0, false);
         }
