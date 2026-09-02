@@ -1,4 +1,4 @@
-//! `slopdesk-guigate` — the four gates that need a real screen.
+//! `slopdesk-guigate` — the five gates that need a real screen.
 //!
 //! One binary over [`slopdesk_devtools::gui`], one verb per shell script that used to be under
 //! `scripts/`. Nothing here decides anything: it parses arguments, resolves the repo root the way
@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use slopdesk_devtools::gui::{launchrestore, macos, multiclient, video};
+use slopdesk_devtools::gui::{launchrestore, macos, multiclient, smooth, video};
 use slopdesk_devtools::repo;
 
 /// What the binary answers to.
@@ -32,10 +32,13 @@ usage: slopdesk-guigate [--repo-root DIR] <gate> [options]
         [--second-client]               …and a second client on the same stream
   multiclient                           two clients, one layout, a real menu gesture between them
   launch-restore                        the launch a USER performs: restore, offer, reattach
+  smooth [--seconds N] [--fps N]        a self-scrolling page streamed to one client, both
+         [--scale N] [--floor FPS]      windows under slopdesk-framewatch: cadence, source vs
+         [--latency]                    remote; --latency flashes instead and pairs the flips
   help                                  this text
 
-Each needs an unlocked Aqua session. `video` needs Screen Recording; `multiclient` needs
-Accessibility. Neither prompt can be answered from a gate, so grant them once by hand.
+Each needs an unlocked Aqua session. `video` and `smooth` need Screen Recording; `multiclient`
+needs Accessibility. Neither prompt can be answered from a gate, so grant them once by hand.
 ";
 
 fn main() -> ExitCode {
@@ -76,6 +79,7 @@ fn main() -> ExitCode {
         "video" => run_video(&root, rest),
         "multiclient" => finish(multiclient::run(&root)),
         "launch-restore" => finish(launchrestore::run(&root)),
+        "smooth" => run_smooth(&root, rest),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             ExitCode::SUCCESS
@@ -91,7 +95,7 @@ fn main() -> ExitCode {
 /// A failure is the gate's own sentence on stderr and a non-zero status.
 ///
 /// The message is the gate's, verbatim and unwrapped by a prefix: each one is a full explanation of
-/// what was observed and why it is wrong, and the whole point of these four is that a red run needs
+/// what was observed and why it is wrong, and the whole point of these five is that a red run needs
 /// no second run to diagnose.
 fn finish(outcome: Result<(), String>) -> ExitCode {
     match outcome {
@@ -131,4 +135,53 @@ fn run_video(root: &std::path::Path, arguments: &[String]) -> ExitCode {
         }
     }
     finish(video::run(root, &options))
+}
+
+/// `smooth [--seconds N] [--fps N] [--scale N] [--floor FPS] [--latency]`.
+fn run_smooth(root: &std::path::Path, arguments: &[String]) -> ExitCode {
+    let mut options = smooth::Options::default();
+    let mut index = 0;
+    while let Some(argument) = arguments.get(index) {
+        let value = arguments.get(index + 1);
+        match argument.as_str() {
+            "--seconds" => {
+                match value.and_then(|text| text.parse().ok()) {
+                    Some(seconds) => options.seconds = seconds,
+                    None => return usage_error("--seconds needs a whole number"),
+                }
+            },
+            "--fps" => {
+                match value.and_then(|text| text.parse().ok()) {
+                    Some(fps) => options.fps = Some(fps),
+                    None => return usage_error("--fps needs a whole number"),
+                }
+            },
+            "--scale" => {
+                match value.and_then(|text| text.parse().ok()) {
+                    Some(scale) => options.scale = Some(scale),
+                    None => return usage_error("--scale needs a number"),
+                }
+            },
+            "--floor" => {
+                match value.and_then(|text| text.parse().ok()) {
+                    Some(floor) => options.floor_fps = floor,
+                    None => return usage_error("--floor needs a number"),
+                }
+            },
+            "--latency" => {
+                options.latency = true;
+                index += 1;
+                continue;
+            },
+            other => return usage_error(&format!("unknown option for smooth: {other}")),
+        }
+        index += 2;
+    }
+    finish(smooth::run(root, &options))
+}
+
+/// An argument the verb does not understand: the reason, and exit 2.
+fn usage_error(why: &str) -> ExitCode {
+    eprintln!("slopdesk-guigate: {why}");
+    ExitCode::from(2)
 }

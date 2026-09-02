@@ -1,4 +1,4 @@
-//! The four RUNTIME gates that drive a real macOS window, and the substrate all four share.
+//! The five RUNTIME gates that drive a real macOS window, and the substrate all five share.
 //!
 //! ## Where the line with [`crate::gates`] and [`crate::ops`] falls
 //! [`crate::gates`] answers a yes/no about the TREE by spawning a toolchain, and `just check` runs
@@ -14,8 +14,9 @@
 //! | `check-video.sh` | [`video`] | capture → HEVC → UDP → decode → a Metal drawable |
 //! | `check-multiclient.sh` | [`multiclient`] | two clients, one layout, a real menu gesture crossing between them |
 //! | `check-launch-restore.sh` | [`launchrestore`] | the launch a USER performs — restore from disk, offer, reattach |
+//! | — (2026-09-02) | [`smooth`] | how much of a moving source's cadence — and how evenly — reaches the client's glass |
 //!
-//! ## Why they are one family and not four programs
+//! ## Why they are one family and not five programs
 //! The four shells shared a substrate they could not share: each spelled the throwaway container,
 //! the `UserDefaults` suite and its removal, the SIGTERM-then-verify-then-SIGKILL reap, the
 //! poll-an-observable loop and the pty-versus-helper child census in its own words, and the
@@ -54,6 +55,7 @@ pub mod control;
 pub mod launchrestore;
 pub mod macos;
 pub mod multiclient;
+pub mod smooth;
 pub mod video;
 
 use std::fmt::Write as _;
@@ -81,6 +83,8 @@ pub mod port {
     pub const MULTICLIENT: u16 = 47422;
     /// [`super::launchrestore`]'s daemon, which starts with no workspace of its own.
     pub const LAUNCH_RESTORE: u16 = 47423;
+    /// [`super::smooth`]'s TERMINAL daemon, carrying the document for its one client.
+    pub const SMOOTH: u16 = 47424;
 }
 
 /// How long a daemon may take to honour its `SIGTERM` before [`reap`] stops asking, in
@@ -496,6 +500,25 @@ pub fn window_census_binary(root: &Path) -> Result<PathBuf, String> {
         )?;
     }
     Ok(binary)
+}
+
+/// `slopdesk-framewatch`, built release in its own workspace (`rust/slopdesk-instruments`).
+///
+/// Always built, never just found: cargo's own freshness check is cheap and a stale binary would
+/// measure with an instrument the tree no longer describes. Release for the profile reason the
+/// workspace exists — `rust/`'s `opt-level = "z"` would put the luma walk on the instrument's own
+/// critical path.
+///
+/// # Errors
+/// When the instrument cannot be built.
+pub fn framewatch_binary(root: &Path) -> Result<PathBuf, String> {
+    let crate_dir = root.join("rust/slopdesk-instruments");
+    proc::run(
+        "cargo",
+        &["build", "--release", "--quiet", "--bin", "slopdesk-framewatch"],
+        &crate_dir,
+    )?;
+    Ok(crate_dir.join("target/release/slopdesk-framewatch"))
 }
 
 /// How many real on-screen windows the `WindowServer` attributes to `pid`, and what it saw.

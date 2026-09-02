@@ -543,6 +543,12 @@ gui-macos:
 gui-video:
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- video
 
+# GUI harness: a self-scrolling page streamed to one client, source and remote under framewatch
+# (Screen Recording TCC for videohostd AND framewatch). `--latency` flashes and pairs the flips.
+# Extra `SLOPDESK_*` in the environment reach the host and the client — that is the A/B seam.
+gui-smooth *ARGS:
+    cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- smooth {{ARGS}}
+
 # GUI gate: two clients on one host (also needs Accessibility TCC)
 gui-multiclient:
     cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- multiclient

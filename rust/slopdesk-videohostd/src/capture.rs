@@ -144,7 +144,7 @@ use slopdesk_video::capture_gates::{
 };
 use slopdesk_video::fps_governor::{
     EncodeCadenceGate, EncodeLoadPacer, EncodeLoadPacerConfig, FpsGovernorConfig, KEYS as GOVERNOR_KEYS,
-    self_heal_effective_every,
+    budget_millis, self_heal_effective_every,
 };
 use slopdesk_video::frame_gate::{FrameObligations, StillnessCrispDecider, should_suppress_static_frame};
 use slopdesk_video::frame_hash::{LumaPlane, SENTINEL, hash_nv12};
@@ -1054,6 +1054,8 @@ struct PacerState {
     pacer: EncodeLoadPacer,
     /// The rate the pacer last actuated.
     paced_fps: i32,
+    /// Frames folded so far, for the periodic debug line only.
+    wall_samples: u32,
     /// The always-on stats EWMA, in milliseconds. Folded even when the pacer itself is off.
     encode_millis_ewma: f64,
 }
@@ -1063,6 +1065,7 @@ impl PacerState {
         Self {
             pacer: EncodeLoadPacer::new(i64::from(fps), EncodeLoadPacerConfig::default(), min_fps),
             paced_fps: fps,
+            wall_samples: 0,
             encode_millis_ewma: 0.0,
         }
     }
@@ -1894,9 +1897,38 @@ impl Inner {
             millis,
             EncodeLoadPacerConfig::default().alpha,
         );
-        if self.gates.encode_pacer {
+        pacer.wall_samples = pacer.wall_samples.wrapping_add(1);
+        let average = pacer.encode_millis_ewma;
+        let samples = pacer.wall_samples;
+        let step = if self.gates.encode_pacer {
+            let before = pacer.paced_fps;
             let governed = pacer.pacer.note(millis, pacer_anchor);
             pacer.paced_fps = i32::try_from(governed).unwrap_or(self.shape.fps);
+            (pacer.paced_fps != before).then_some((before, pacer.paced_fps))
+        } else {
+            None
+        };
+        drop(pacer);
+        if !self.gates.debug_gaps {
+            return;
+        }
+        // Every three hundred frames under the debug switch, the average itself — the number the
+        // pacer's threshold is read against, so a run can see how close to the budget it sat.
+        if samples.is_multiple_of(300) {
+            crate::diag::say(&format!(
+                "encode wall avg {average:.1} ms/frame (budget {:.1} ms at {} fps)",
+                budget_millis(i64::from(self.shape.fps)),
+                self.shape.fps
+            ));
+        }
+        // A step is a cadence change the client sees; under the debug switch it is also a line a
+        // cadence run can count against the send gaps it caused.
+        if let Some((before, after)) = step {
+            crate::diag::say(&format!(
+                "encode-load pacer: {before} → {after} fps (encode {average:.1} ms/frame avg, budget {:.1} \
+                 ms)",
+                budget_millis(i64::from(self.shape.fps))
+            ));
         }
     }
 

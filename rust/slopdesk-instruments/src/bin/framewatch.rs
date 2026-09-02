@@ -18,8 +18,15 @@
 //! ```text
 //! slopdesk-framewatch --list
 //! slopdesk-framewatch --title <substring> [--seconds 20] [--fps 120]
+//! slopdesk-framewatch --title-a <source> --title-b <client> [--seconds 20] [--fps 120]
 //! slopdesk-framewatch --latency --title-a <source> --title-b <client> [--seconds 20] [--fps 120]
 //! ```
+//!
+//! The middle form is the PAIRED cadence: one enumeration, two streams over the same span, and the
+//! two histograms side by side with a `[A]` / `[B]` tag on every line. Two framewatch processes
+//! cannot do it — a second `SCShareableContent` enumeration beside a live stream answers "nothing
+//! shareable" or refuses the stream with status `-1` (HW-observed 2026-09-02), and two separate
+//! spans are not the same span.
 //!
 //! A `@display` suffix on either latency title watches the DISPLAY the window sits on, cropped to
 //! the window's rect, instead of the per-window composite — the filter-kind A/B this instrument
@@ -412,6 +419,18 @@ fn cadence_lines(arrivals: &[f64], checksums: &[u64]) -> Vec<String> {
     ]
 }
 
+/// The paired cadence's tag: `framewatch:` becomes `framewatch[A]:` on every line of one window's
+/// report, so two reports in one stream stay two reports.
+fn tagged(lines: &[String], tag: &str) -> Vec<String> {
+    lines
+        .iter()
+        .map(|line| {
+            line.strip_prefix("framewatch:")
+                .map_or_else(|| line.clone(), |rest| format!("framewatch[{tag}]:{rest}"))
+        })
+        .collect()
+}
+
 /// The latency report, in the Swift original's exact wording.
 ///
 /// Fewer than [`MIN_PAIRS`] pairs is a SETUP answer, not a measurement — the caller turns it into
@@ -478,7 +497,7 @@ mod capture {
 
     use super::{
         CHECKSUM_OFFSET, Flip, FlipDetector, MIN_EXTENT, MIN_PAIRS, Options, QUEUE_DEPTH, cadence_lines,
-        content_checksum, dwell, latency_lines, mean_luma, pair_deltas, split_display_suffix,
+        content_checksum, dwell, latency_lines, mean_luma, pair_deltas, split_display_suffix, tagged,
     };
 
     /// The arrival timeline and the content timeline, which are always the same length.
@@ -754,6 +773,73 @@ mod capture {
         0
     }
 
+    /// Paired cadence: two windows, one enumeration, two histograms over the same span.
+    fn watch_pair(options: &Options, content: &ShareableContent, query_a: &str, query_b: &str) -> i32 {
+        let Some(window_a) = find_window(content, query_a) else {
+            eprintln!("no window matching \"{query_a}\" — try --list");
+            return 1;
+        };
+        let Some(window_b) = find_window(content, query_b) else {
+            eprintln!("no window matching \"{query_b}\" — try --list");
+            return 1;
+        };
+        for (tag, window) in [("A", &window_a), ("B", &window_b)] {
+            let size = window.frame().size;
+            println!(
+                "framewatch[{tag}]: watching id={} {} \"{}\" [{}x{}] for {}s @{}Hz",
+                window.id(),
+                app_name(window),
+                title(window),
+                whole(size.width),
+                whole(size.height),
+                whole(options.seconds),
+                options.fps
+            );
+        }
+
+        let started = Instant::now();
+        let collector_a = Arc::new(Collector::new(started));
+        let collector_b = Arc::new(Collector::new(started));
+        let frames_a = DispatchQueue::new("framewatch.frames.a", None);
+        let frames_b = DispatchQueue::new("framewatch.frames.b", None);
+        let audio = DispatchQueue::new("framewatch.audio", None);
+        let stream_a = match start_stream(
+            &window_a,
+            options.fps,
+            false,
+            Arc::<Collector>::clone(&collector_a),
+            &frames_a,
+            &audio,
+        ) {
+            Ok(stream) => stream,
+            Err(status) => return refuse(status),
+        };
+        let stream_b = match start_stream(
+            &window_b,
+            options.fps,
+            false,
+            Arc::<Collector>::clone(&collector_b),
+            &frames_b,
+            &audio,
+        ) {
+            Ok(stream) => stream,
+            Err(status) => {
+                let _stopped = stream_a.stop();
+                return refuse(status);
+            },
+        };
+        thread::sleep(dwell(options.seconds));
+        let _stopped_a = stream_a.stop();
+        let _stopped_b = stream_b.stop();
+        for line in tagged(&collector_a.report(), "A") {
+            println!("{line}");
+        }
+        for line in tagged(&collector_b.report(), "B") {
+            println!("{line}");
+        }
+        0
+    }
+
     /// Latency mode: two windows, one clock, one paired distribution.
     fn measure_latency(options: &Options, content: &ShareableContent) -> i32 {
         let (Some(query_a), Some(query_b)) = (options.title_a.as_deref(), options.title_b.as_deref()) else {
@@ -840,6 +926,9 @@ mod capture {
         if options.latency {
             return measure_latency(options, &content);
         }
+        if let (Some(query_a), Some(query_b)) = (options.title_a.as_deref(), options.title_b.as_deref()) {
+            return watch_pair(options, &content, query_a, query_b);
+        }
         let Some(query) = options.title.as_deref() else {
             eprintln!("need --title <substring> (or --list)");
             return 1;
@@ -912,6 +1001,20 @@ mod tests {
         cadence_lines, content_checksum, dwell, latency_lines, mean_luma, pair_deltas, parse_options,
         percentile_index, split_display_suffix,
     };
+
+    /// The paired cadence tags every report line and leaves a line without the prefix alone, so
+    /// the two reports in one stream stay two reports.
+    #[test]
+    fn a_tag_lands_on_every_report_line_and_nowhere_else() {
+        let lines = vec![
+            "framewatch: frames=3 span=1.0s eff_fps=3.0".to_owned(),
+            "something else".to_owned(),
+        ];
+        assert_eq!(super::tagged(&lines, "B"), vec![
+            "framewatch[B]: frames=3 span=1.0s eff_fps=3.0".to_owned(),
+            "something else".to_owned(),
+        ]);
+    }
 
     /// Builds an argument vector the way the shell hands one over.
     fn argv(arguments: &[&str]) -> Vec<String> {

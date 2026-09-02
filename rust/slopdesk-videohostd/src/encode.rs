@@ -239,6 +239,9 @@ pub struct Encoder {
     /// cadence, and sharing the lock would put one behind a frame's quantiser decision.
     tokens: Mutex<AckedTokens>,
     shared: Arc<Delivery>,
+    /// `SLOPDESK_VIDEO_DEBUG`: whether a frame the framework declined is also a line on stderr.
+    /// The counter feeds drop relief either way; the line is what a cadence run reads.
+    debug: bool,
     /// `None` until [`Self::open`] succeeds. The Swift kept the same shape and for the same reason:
     /// an encoder is constructed where its dimensions are known and opened where the window server
     /// is, and those are not the same moment.
@@ -255,6 +258,7 @@ impl Encoder {
         let read = reader(overlay);
         let config = Config::resolve(&read, Some(qp_decouple(overlay)));
         let frame_delays = frame_delay_candidates(read("SLOPDESK_MAX_FRAME_DELAY").as_deref());
+        let debug = read("SLOPDESK_VIDEO_DEBUG").is_some();
         let state = EncoderState::new(
             config,
             shape.bitrate,
@@ -273,6 +277,7 @@ impl Encoder {
                 drops: AtomicI64::new(0),
                 scratch: Mutex::new(Vec::new()),
             }),
+            debug,
             session: None,
         }
     }
@@ -547,6 +552,11 @@ impl Encoder {
             return INVALID_SESSION;
         };
         let drops = self.shared.drops.swap(0, Ordering::Relaxed);
+        if self.debug && drops > 0 {
+            crate::diag::say(&format!(
+                "encoder self-dropped {drops} frame(s): rate control declined to fit them"
+            ));
+        }
         let (settle, writes) = {
             let Ok(mut state) = self.state.lock() else {
                 return INVALID_SESSION;

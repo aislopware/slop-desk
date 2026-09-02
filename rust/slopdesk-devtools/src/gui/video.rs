@@ -167,11 +167,37 @@ pub fn pick(listing: &str, needle: Option<&str>) -> Option<Candidate> {
         .max_by_key(Candidate::area)
 }
 
+/// `slopdesk-videohostd --list` under the gate's container, both streams joined.
+///
+/// Runs BEFORE any daemon does: listing while a serving host's `SCStream` is active hangs the
+/// enumeration (HW-learned 2026-06-09, see [`raise_and_shoot`]).
+///
+/// # Errors
+/// When the binary cannot be run.
+pub(super) fn shareable_listing(
+    videohostd: &Path,
+    environment: &[(String, String)],
+) -> Result<String, String> {
+    let mut listing_command = Command::new(videohostd);
+    listing_command.arg("--list");
+    for (key, value) in environment {
+        listing_command.env(key, value);
+    }
+    let listing_output = listing_command
+        .output()
+        .map_err(|error| format!("{}: {error}", videohostd.display()))?;
+    Ok(format!(
+        "{}{}",
+        String::from_utf8_lossy(&listing_output.stdout),
+        String::from_utf8_lossy(&listing_output.stderr)
+    ))
+}
+
 /// The video host, reaped whatever happens next.
 #[derive(Debug)]
-struct VideoHost {
-    child: Child,
-    log: Log,
+pub(super) struct VideoHost {
+    pub(super) child: Child,
+    pub(super) log: Log,
 }
 
 impl Drop for VideoHost {
@@ -181,11 +207,112 @@ impl Drop for VideoHost {
     }
 }
 
+impl VideoHost {
+    /// Serve `window_id` on the fixed port pair, with `SLOPDESK_VIDEO_DEBUG` on and `extra` argv
+    /// after the ports, logging to `<work>/host.log`.
+    ///
+    /// Whatever else is in this process's environment reaches the daemon too, which is how a
+    /// `SLOPDESK_*` A/B typed in front of a `just gui-…` reaches the path under measurement.
+    ///
+    /// # Errors
+    /// When the binary cannot be spawned, or exits within its first second.
+    pub(super) fn start(
+        gate: &str,
+        videohostd: &Path,
+        work: &Path,
+        environment: &[(String, String)],
+        window_id: u32,
+        extra: &[String],
+    ) -> Result<Self, String> {
+        kill_matching(&format!("slopdesk-videohostd --window-id {window_id}"));
+        let host_log = Log::at(work.join("host.log"));
+        host_log.truncate()?;
+        let sink = fs::File::create(&host_log.path)
+            .map_err(|error| format!("{}: {error}", host_log.path.display()))?;
+        let errors = sink
+            .try_clone()
+            .map_err(|error| format!("{}: {error}", host_log.path.display()))?;
+        let mut command = Command::new(videohostd);
+        command
+            .args([
+                "--window-id",
+                &window_id.to_string(),
+                "--media-port",
+                &MEDIA_PORT.to_string(),
+                "--cursor-port",
+                &CURSOR_PORT.to_string(),
+            ])
+            .args(extra)
+            .env("SLOPDESK_VIDEO_DEBUG", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(sink))
+            .stderr(Stdio::from(errors));
+        for (key, value) in environment {
+            command.env(key, value);
+        }
+        let video_host = Self {
+            child: command
+                .spawn()
+                .map_err(|error| format!("{}: {error}", videohostd.display()))?,
+            log: host_log,
+        };
+        thread::sleep(Duration::from_secs(1));
+        if !alive(video_host.child.id()) {
+            video_host.log.dump("video host log", 0);
+            return Err("slopdesk-videohostd did not stay up".to_owned());
+        }
+        say(gate, &format!("host up (pid {})", video_host.child.id()));
+        Ok(video_host)
+    }
+}
+
+/// The PATH-2 auto-open seam: the environment that has a client mint a DETACHED remote window for
+/// `window_id`, titled `title`, over the terminal daemon on `hostd_port`.
+///
+/// `follows_pane` is `SLOPDESK_GUI_WINDOW_FOLLOWS_PANE`: only with it on does a pane resize become
+/// a `resizeRequest` the host acts on (default-off in the product, where a pane resize letterboxes
+/// instead of moving the window).
+#[must_use]
+pub(super) fn autoconnect_environment(
+    window_id: u32,
+    title: &str,
+    hostd_port: u16,
+    follows_pane: bool,
+) -> Vec<(String, String)> {
+    let mut environment = vec![
+        ("SLOPDESK_VIDEO_DEBUG".to_owned(), "1".to_owned()),
+        (
+            "SLOPDESK_VIDEO_AUTOCONNECT_HOST".to_owned(),
+            "127.0.0.1".to_owned(),
+        ),
+        (
+            "SLOPDESK_VIDEO_AUTOCONNECT_MEDIA_PORT".to_owned(),
+            MEDIA_PORT.to_string(),
+        ),
+        (
+            "SLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT".to_owned(),
+            CURSOR_PORT.to_string(),
+        ),
+        (
+            "SLOPDESK_VIDEO_AUTOCONNECT_WINDOW_ID".to_owned(),
+            window_id.to_string(),
+        ),
+        ("SLOPDESK_VIDEO_AUTOCONNECT_TITLE".to_owned(), title.to_owned()),
+        // `WorkspaceStore.videoTarget(from:)` reads this for the TCP leg of the very same
+        // `ConnectionTarget`, so pointing it at the terminal daemon is the whole wiring.
+        ("SLOPDESK_AUTOCONNECT_PORT".to_owned(), hostd_port.to_string()),
+    ];
+    if follows_pane {
+        environment.push(("SLOPDESK_GUI_WINDOW_FOLLOWS_PANE".to_owned(), "1".to_owned()));
+    }
+    environment
+}
+
 /// A launched client instance, reaped whatever happens next.
 #[derive(Debug)]
-struct ClientProcess {
-    child: Child,
-    log: Log,
+pub(super) struct ClientProcess {
+    pub(super) child: Child,
+    pub(super) log: Log,
 }
 
 impl Drop for ClientProcess {
@@ -196,6 +323,39 @@ impl Drop for ClientProcess {
 }
 
 impl ClientProcess {
+    /// Launch one instance into `<work>/<home>`, logging to `<work>/<log>`, with `environment`
+    /// on top of the family's four.
+    ///
+    /// # Errors
+    /// When the log cannot be truncated or the binary cannot be spawned.
+    pub(super) fn launch(
+        gate: &str,
+        app: &super::AppBundle,
+        suite: &Suite,
+        work: &Path,
+        home: &str,
+        log: &str,
+        environment: Vec<(String, String)>,
+    ) -> Result<Self, String> {
+        let log = Log::at(work.join(log));
+        log.truncate()?;
+        let client = Self {
+            child: Launch {
+                binary: &app.binary,
+                container: work.join(home),
+                suite,
+                socket: None,
+                log: log.path.clone(),
+                environment,
+                arguments: Vec::new(),
+            }
+            .spawn()?,
+            log,
+        };
+        say(gate, &format!("client up (pid {})", client.child.id()));
+        Ok(client)
+    }
+
     /// How many frames this instance has DECODED, and how many it has PRESENTED.
     ///
     /// Read off the client's own `SLOPDESK_VIDEO_DEBUG` stream:
@@ -252,19 +412,7 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
         "enumerating shareable windows (needs Screen-Recording TCC + a GUI session)",
     );
     let videohostd = crate::hostbin::binary_of(root, crate::hostbin::Daemon::Video, false);
-    let mut listing_command = Command::new(&videohostd);
-    listing_command.arg("--list");
-    for (key, value) in &environment {
-        listing_command.env(key, value);
-    }
-    let listing_output = listing_command
-        .output()
-        .map_err(|error| format!("{}: {error}", videohostd.display()))?;
-    let listing = format!(
-        "{}{}",
-        String::from_utf8_lossy(&listing_output.stdout),
-        String::from_utf8_lossy(&listing_output.stderr)
-    );
+    let listing = shareable_listing(&videohostd, &environment)?;
 
     let Some(target) = pick(&listing, options.window_title.as_deref()) else {
         complain("==> FAIL: no suitable shareable window found. Candidates:");
@@ -284,43 +432,7 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
     );
 
     // ── the video host ──────────────────────────────────────────────────────────────────────
-    kill_matching(&format!("slopdesk-videohostd --window-id {}", target.id));
-    let host_log = Log::at(work.join("host.log"));
-    host_log.truncate()?;
-    let sink =
-        fs::File::create(&host_log.path).map_err(|error| format!("{}: {error}", host_log.path.display()))?;
-    let errors = sink
-        .try_clone()
-        .map_err(|error| format!("{}: {error}", host_log.path.display()))?;
-    let mut command = Command::new(&videohostd);
-    command
-        .args([
-            "--window-id",
-            &target.id.to_string(),
-            "--media-port",
-            &MEDIA_PORT.to_string(),
-            "--cursor-port",
-            &CURSOR_PORT.to_string(),
-        ])
-        .env("SLOPDESK_VIDEO_DEBUG", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(sink))
-        .stderr(Stdio::from(errors));
-    for (key, value) in &environment {
-        command.env(key, value);
-    }
-    let video_host = VideoHost {
-        child: command
-            .spawn()
-            .map_err(|error| format!("{}: {error}", videohostd.display()))?,
-        log: host_log,
-    };
-    thread::sleep(Duration::from_secs(1));
-    if !alive(video_host.child.id()) {
-        video_host.log.dump("video host log", 0);
-        return Err("slopdesk-videohostd did not stay up".to_owned());
-    }
-    say("video", &format!("host up (pid {})", video_host.child.id()));
+    let video_host = VideoHost::start("video", &videohostd, &work, &environment, target.id, &[])?;
 
     // ── the terminal daemon, which owns the workspace document ──────────────────────────────
     say(
@@ -334,133 +446,25 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
     let app_pattern = "video-verify/DD.*MacOS/SlopDesk";
     kill_matching(app_pattern);
     suite.seed_first_launch()?;
-    let client_a_log = Log::at(work.join("client.log"));
-    client_a_log.truncate()?;
-    let client_a = ClientProcess {
-        child: Launch {
-            binary: &app.binary,
-            container: work.join("client-home"),
-            suite: &suite,
-            socket: None,
-            log: client_a_log.path.clone(),
-            environment: vec![
-                ("SLOPDESK_VIDEO_DEBUG".to_owned(), "1".to_owned()),
-                // The resize proof below drags the client window; only with host-follow on does
-                // the pane's new size become a `resizeRequest` the host acts on (default-off in
-                // the product, where a pane resize letterboxes instead of moving the window).
-                ("SLOPDESK_GUI_WINDOW_FOLLOWS_PANE".to_owned(), "1".to_owned()),
-                (
-                    "SLOPDESK_VIDEO_AUTOCONNECT_HOST".to_owned(),
-                    "127.0.0.1".to_owned(),
-                ),
-                (
-                    "SLOPDESK_VIDEO_AUTOCONNECT_MEDIA_PORT".to_owned(),
-                    MEDIA_PORT.to_string(),
-                ),
-                (
-                    "SLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT".to_owned(),
-                    CURSOR_PORT.to_string(),
-                ),
-                (
-                    "SLOPDESK_VIDEO_AUTOCONNECT_WINDOW_ID".to_owned(),
-                    target.id.to_string(),
-                ),
-                (
-                    "SLOPDESK_VIDEO_AUTOCONNECT_TITLE".to_owned(),
-                    format!("{} (remote)", target.title),
-                ),
-                // `WorkspaceStore.videoTarget(from:)` reads this for the TCP leg of the very same
-                // `ConnectionTarget`, so pointing it at the terminal daemon is the whole wiring.
-                ("SLOPDESK_AUTOCONNECT_PORT".to_owned(), port::VIDEO.to_string()),
-            ],
-            arguments: Vec::new(),
-        }
-        .spawn()?,
-        log: client_a_log,
-    };
+    // Host-follow ON: the resize proof below drags the client window, and only then does the
+    // pane's new size become a `resizeRequest` the host acts on.
+    let client_a = ClientProcess::launch(
+        "video",
+        &app,
+        &suite,
+        &work,
+        "client-home",
+        "client.log",
+        autoconnect_environment(
+            target.id,
+            &format!("{} (remote)", target.title),
+            port::VIDEO,
+            true,
+        ),
+    )?;
     let pid_a = client_a.child.id();
-    say("video", &format!("client up (pid {pid_a})"));
 
-    // ── the connectivity gates: assertions, not observations ────────────────────────────────
-    // A client that never dialled cannot have rendered anything, so a screenshot past this point
-    // would prove nothing. Each exits non-zero and dumps the logs rather than printing a warning
-    // and carrying on to a picture of the desktop.
-    say(
-        "video",
-        &format!("waiting for the workspace document channel on :{}…", port::VIDEO),
-    );
-    if poll("a workspace document channel", 20, || {
-        hostd.accepted_channels() >= 1
-    })
-    .is_err()
-    {
-        complain("==> FAIL: slopdesk-hostd never accepted a workspace channel — the client has no document");
-        complain("    to send its pane-spawn intent to, so no remote-desktop pane can exist.");
-        hostd.log.dump("hostd log", 0);
-        client_a.log.dump("client log", 0);
-        return Err("no workspace document channel".to_owned());
-    }
-    say("video", "workspace document channel accepted ✅");
-
-    say(
-        "video",
-        &format!("waiting for client↔host UDP (media:{MEDIA_PORT} + cursor:{CURSOR_PORT})…"),
-    );
-    if poll("a client→host UDP flow", 20, || holds_udp(pid_a, MEDIA_PORT)).is_err() {
-        complain(&format!(
-            "==> FAIL: no client→host UDP flow on :{MEDIA_PORT} — the remote-desktop pane never dialled."
-        ));
-        video_host.log.dump("video host log", 0);
-        client_a.log.dump("client log", 0);
-        return Err("the video lane never dialled".to_owned());
-    }
-    say("video", "client connected to host over UDP ✅");
-    // The capture→encode→decode→render pipeline gets a few seconds to produce and present frames.
-    thread::sleep(Duration::from_secs(5));
-
-    // ── a frame was DECODED, and a frame was PRESENTED ──────────────────────────────────────
-    // Everything above proves the client DIALLED. A client that dialled can still show a blank pane
-    // for ever — a VT decompression session that errors on the first IDR, a `CAMetalLayer` that
-    // never hands out a drawable, a decode gate that never re-opens — and in every one of those,
-    // capture, encode and both sockets stay perfectly healthy, so not one check above moves.
-    // Without this the gate printed ✅ four times and exited 0 on a white window.
-    say("video", "waiting for a DECODED frame and a PRESENTED frame…");
-    let _ignored = poll("a decoded and a presented frame", 40, || {
-        let (decoded, presented) = client_a.frames();
-        decoded > 0 && presented > 0
-    });
-    let (decoded, presented) = client_a.frames();
-    if decoded < 1 {
-        complain(
-            "==> FAIL: the client decoded NOT ONE frame. Both sockets are up and the host is streaming,",
-        );
-        complain("    so this is the decode leg: VideoToolbox rejected the stream, or the decode gate never");
-        complain("    re-opened. The remote-desktop pane is blank.");
-        video_host.log.dump("video host log", 60);
-        client_a.log.dump("client log", 60);
-        return Err("the client decoded nothing".to_owned());
-    }
-    if presented < 1 {
-        complain(&format!(
-            "==> FAIL: the client is decoding ({decoded} decode marker(s)) and PRESENTED none. The pixels"
-        ));
-        complain(
-            "    exist and never reached a drawable — the Metal present path (no CAMetalLayer drawable, a",
-        );
-        complain("    plane that will not make an MTLTexture, a command encoder the device refused, a pacer");
-        complain("    that never fires). The remote-desktop pane is blank.");
-        complain(&format!(
-            "    (RENDER# markers seen: {} — those print BEFORE the texture/encoder guards, so a positive",
-            client_a.log.count("RENDER#")
-        ));
-        complain("     count here is the signature of exactly this bug.)");
-        client_a.log.dump("client log", 60);
-        return Err("the client presented nothing".to_owned());
-    }
-    say(
-        "video",
-        &format!("frames DECODED and PRESENTED ({decoded} decode / {presented} present markers) ✅"),
-    );
+    let (decoded, _presented) = await_first_frame("video", &hostd, &video_host, &client_a, port::VIDEO)?;
 
     // ONE auto-connect spawns ONE shell. The video shape is a lone terminal plus a DETACHED desktop
     // pane, and a `.desktop` pane runs no PTY — so exactly one shell may ever attach. A second
@@ -594,6 +598,103 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
     Ok(())
 }
 
+/// The connectivity gates — assertions, not observations — up to the first PRESENTED frame.
+///
+/// A client that never dialled cannot have rendered anything, so anything read past this point
+/// would prove nothing. Each exits non-zero and dumps the logs rather than printing a warning and
+/// carrying on. Returns the decode and present marker counts at the moment both were non-zero.
+///
+/// The last assertion is the one that matters: everything before it proves the client DIALLED. A
+/// client that dialled can still show a blank pane for ever — a VT decompression session that
+/// errors on the first IDR, a `CAMetalLayer` that never hands out a drawable, a decode gate that
+/// never re-opens — and in every one of those, capture, encode and both sockets stay perfectly
+/// healthy, so not one check before it moves. Without it the video gate printed ✅ four times and
+/// exited 0 on a white window.
+///
+/// # Errors
+/// When the workspace channel is never accepted, no UDP flow appears, or the client decodes or
+/// presents nothing.
+pub(super) fn await_first_frame(
+    gate: &str,
+    hostd: &Hostd,
+    video_host: &VideoHost,
+    client: &ClientProcess,
+    hostd_port: u16,
+) -> Result<(usize, usize), String> {
+    let pid = client.child.id();
+    say(
+        gate,
+        &format!("waiting for the workspace document channel on :{hostd_port}…"),
+    );
+    if poll("a workspace document channel", 20, || {
+        hostd.accepted_channels() >= 1
+    })
+    .is_err()
+    {
+        complain("==> FAIL: slopdesk-hostd never accepted a workspace channel — the client has no document");
+        complain("    to send its pane-spawn intent to, so no remote-desktop pane can exist.");
+        hostd.log.dump("hostd log", 0);
+        client.log.dump("client log", 0);
+        return Err("no workspace document channel".to_owned());
+    }
+    say(gate, "workspace document channel accepted ✅");
+
+    say(
+        gate,
+        &format!("waiting for client↔host UDP (media:{MEDIA_PORT} + cursor:{CURSOR_PORT})…"),
+    );
+    if poll("a client→host UDP flow", 20, || holds_udp(pid, MEDIA_PORT)).is_err() {
+        complain(&format!(
+            "==> FAIL: no client→host UDP flow on :{MEDIA_PORT} — the remote-desktop pane never dialled."
+        ));
+        video_host.log.dump("video host log", 0);
+        client.log.dump("client log", 0);
+        return Err("the video lane never dialled".to_owned());
+    }
+    say(gate, "client connected to host over UDP ✅");
+    // The capture→encode→decode→render pipeline gets a few seconds to produce and present frames.
+    thread::sleep(Duration::from_secs(5));
+
+    say(gate, "waiting for a DECODED frame and a PRESENTED frame…");
+    let _ignored = poll("a decoded and a presented frame", 40, || {
+        let (decoded, presented) = client.frames();
+        decoded > 0 && presented > 0
+    });
+    let (decoded, presented) = client.frames();
+    if decoded < 1 {
+        complain(
+            "==> FAIL: the client decoded NOT ONE frame. Both sockets are up and the host is streaming,",
+        );
+        complain("    so this is the decode leg: VideoToolbox rejected the stream, or the decode gate never");
+        complain("    re-opened. The remote-desktop pane is blank.");
+        video_host.log.dump("video host log", 60);
+        client.log.dump("client log", 60);
+        return Err("the client decoded nothing".to_owned());
+    }
+    if presented < 1 {
+        complain(&format!(
+            "==> FAIL: the client is decoding ({decoded} decode marker(s)) and PRESENTED none. The pixels"
+        ));
+        complain(
+            "    exist and never reached a drawable — the Metal present path (no CAMetalLayer drawable, a",
+        );
+        complain("    plane that will not make an MTLTexture, a command encoder the device refused, a pacer");
+        complain("    that never fires). The remote-desktop pane is blank.");
+        complain(&format!(
+            "    (RENDER# markers seen: {} — those print BEFORE the texture/encoder guards, so a positive",
+            client.log.count("RENDER#")
+        ));
+        complain("     count here is the signature of exactly this bug.)");
+        client.log.dump("client log", 60);
+        return Err("the client presented nothing".to_owned());
+    }
+    say(
+        gate,
+        &format!("frames DECODED and PRESENTED ({decoded} decode / {presented} present markers) ✅"),
+    );
+    Ok((decoded, presented))
+}
+
 /// The fan-out half: a SECOND client that learns the pane from the HOST's document.
 ///
 /// B gets the TERMINAL autoconnect and NOTHING else. Giving it `SLOPDESK_VIDEO_AUTOCONNECT_*` would
@@ -618,30 +719,15 @@ fn fan_out(
         "video",
         "launching a SECOND client (document-driven, no video autoconnect)",
     );
-    let log = Log::at(work.join("client-b.log"));
-    log.truncate()?;
-    let client_b = ClientProcess {
-        child: Launch {
-            binary: &app.binary,
-            // Its own container, so it shares neither `workspace-cache.json` nor
-            // `device-prefs.json` with A — and the SAME defaults suite, because the pair are meant
-            // to agree and what is being kept out is the developer's own MRU.
-            container: work.join("client-b-home"),
-            suite,
-            socket: None,
-            log: log.path.clone(),
-            environment: vec![
-                ("SLOPDESK_VIDEO_DEBUG".to_owned(), "1".to_owned()),
-                ("SLOPDESK_AUTOCONNECT_HOST".to_owned(), "127.0.0.1".to_owned()),
-                ("SLOPDESK_AUTOCONNECT_PORT".to_owned(), port::VIDEO.to_string()),
-            ],
-            arguments: Vec::new(),
-        }
-        .spawn()?,
-        log,
-    };
+    // Its own container, so it shares neither `workspace-cache.json` nor `device-prefs.json` with
+    // A — and the SAME defaults suite, because the pair are meant to agree and what is being kept
+    // out is the developer's own MRU.
+    let client_b = ClientProcess::launch("video", app, suite, work, "client-b-home", "client-b.log", vec![
+        ("SLOPDESK_VIDEO_DEBUG".to_owned(), "1".to_owned()),
+        ("SLOPDESK_AUTOCONNECT_HOST".to_owned(), "127.0.0.1".to_owned()),
+        ("SLOPDESK_AUTOCONNECT_PORT".to_owned(), port::VIDEO.to_string()),
+    ])?;
     let pid_b = client_b.child.id();
-    say("video", &format!("second client up (pid {pid_b})"));
 
     // TWO accepted channels. Without this, everything below could be measuring a B that never
     // reached the document at all — and a B with no document has no pane to render, so its silence
