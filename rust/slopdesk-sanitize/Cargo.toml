@@ -53,10 +53,6 @@ strip = "debuginfo"
 # The strict block, copied rather than inherited — inheriting would mean being a workspace member,
 # which is what the profile forbids.
 [lints.rust]
-# `forbid`, not `deny` (stage 28): this crate has never contained an `unsafe` block, and `forbid`
-# is what turns that from a fact about today's code into one no downstream `allow` can undo. Every
-# syscall with no safe wrapper lives in `slopdesk-posix`; if this daemon ever needs one, it depends
-# on that crate rather than lifting the lint here.
 unsafe_code = "forbid"
 
 missing_docs = "deny"
@@ -88,6 +84,7 @@ unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 panic_in_result_fn = "deny"
+indexing_slicing = "deny"
 integer_division = "deny"
 exit = "deny"
 todo = "deny"
@@ -95,6 +92,7 @@ unimplemented = "deny"
 unreachable = "deny"
 dbg_macro = "deny"
 print_stdout = "deny"
+print_stderr = "deny"
 mem_forget = "deny"
 rest_pat_in_fully_bound_structs = "deny"
 verbose_file_reads = "deny"
@@ -104,14 +102,16 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
+# `forbid`, not `deny` (stage 28): this crate has never contained an `unsafe` block, and `forbid`
+# is what turns that from a fact about today's code into one no downstream `allow` can undo. Every
+# syscall with no safe wrapper lives in `slopdesk-posix`; if this daemon ever needs one, it depends
+# on that crate rather than lifting the lint here.
 # `indexing_slicing` was a crate-wide allow whose stated reason — a clamped terminal grid — described
 # a structure this crate does not contain. It is denied here now and exempted file by file, with the
 # reason each file can actually make: eight VT scanners where `bytes[i]` is bounded by the `while`
 # head that let control reach it, and `overprint`, which indexes vectors it built and measured
 # itself. The `get(i)` rewrite would trade one panic that cannot fire for a `None` arm that swallows
 # a real off-by-one, so the exemption is kept — just not one inch wider than the files that earn it.
-indexing_slicing = "deny"
-
 # Disabled, with a reason:
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
 #   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
@@ -119,5 +119,6 @@ indexing_slicing = "deny"
 #   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
 #   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
 #   here would be obeyed before anyone reads this file.
+multiple_crate_versions = "allow"
 suboptimal_flops = "allow"
 imprecise_flops = "allow"

@@ -30,8 +30,9 @@
 //! `calculateScore`), MIT License, Copyright (c) 2013-2024 Junegunn Choi.
 
 use crate::{
-    BONUS_BOUNDARY, BONUS_BOUNDARY_WHITE, BONUS_CONSECUTIVE, BONUS_FIRST_CHAR_MULTIPLIER, CharClass, Match,
-    SCORE_GAP_EXTENSION, SCORE_GAP_START, SCORE_MATCH, bonus_for, class_of, lower, matched,
+    BONUS_BOUNDARY, BONUS_BOUNDARY_WHITE, BONUS_CONSECUTIVE, BONUS_FIRST_CHAR_MULTIPLIER, CharClass,
+    MAX_CANDIDATE_SCALARS, MAX_PATTERN_SCALARS, Match, SCORE_GAP_EXTENSION, SCORE_GAP_START, SCORE_MATCH,
+    bonus_for, class_of, fits, lower, matched,
 };
 
 /// What one term demands of a candidate.
@@ -109,6 +110,24 @@ impl Pattern {
     /// AND: a set that matched nothing contributes no offset, and one missing offset fails the
     /// whole pattern.
     fn run(&self, candidate: &str, with_pos: bool) -> Option<Match> {
+        if self.is_empty() {
+            return Some(Match {
+                score: 0,
+                positions: Vec::new(),
+            });
+        }
+        // The same refusal as [`crate::score`]'s, and for the same reason: the collect below is
+        // the first allocation the candidate's length would size, and the exact matchers walk a
+        // `candidate × term` rectangle just as the fuzzy one does.
+        if !fits(candidate, MAX_CANDIDATE_SCALARS)
+            || self
+                .sets
+                .iter()
+                .flatten()
+                .any(|term| term.text.len() > MAX_PATTERN_SCALARS)
+        {
+            return None;
+        }
         let text: Vec<char> = candidate.chars().collect();
         let mut score = 0;
         let mut positions: Vec<u32> = Vec::new();

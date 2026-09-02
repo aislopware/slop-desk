@@ -427,6 +427,12 @@ impl CandidateProvider for HistoryProvider<'_> {
         if request.cursor < request.text.len() {
             return Vec::new();
         }
+        // Every entry is handed over unscored, clone and all, and that is deliberate rather than
+        // a missed `search_history`: the query a candidate is matched against is derived by
+        // [`complete`] from the span it replaces (`dequote` of the text up to the caret), so a
+        // pre-filter here would be a second spelling of that rule — and the ranker scores every
+        // survivor anyway, so it would run the DP twice per entry to save a clone the DP already
+        // dwarfs. `search_history` scores `&str` first because it IS the ranker for ⌃R.
         self.history
             .entries()
             .iter()

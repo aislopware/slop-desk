@@ -92,6 +92,18 @@ pub fn strip(bytes: &[u8]) -> Vec<u8> {
             index = end;
             continue;
         }
+        if is_plain(byte) {
+            // The common case is a run of ASCII between two sequences; it is copied as one slice
+            // rather than a byte at a time, and a plain byte introduces nothing, so the run cannot
+            // hide a sequence start.
+            let end = bytes[index..]
+                .iter()
+                .position(|&candidate| !is_plain(candidate))
+                .map_or(bytes.len(), |offset| index + offset);
+            out.extend_from_slice(&bytes[index..end]);
+            index = end;
+            continue;
+        }
         if let Some(end) = sequence_end(bytes, index) {
             index = end;
         } else {
@@ -100,6 +112,15 @@ pub fn strip(bytes: &[u8]) -> Vec<u8> {
         }
     }
     out
+}
+
+/// Whether a byte is copied through untouched wherever it appears: not a multi-byte lead, and not
+/// one of the three bytes [`introducer`] reads as the start of a sequence.
+///
+/// Every other byte — a continuation with no lead, an invalid lead, a C0 control — is passed
+/// through as well, but one at a time by the loop above, exactly as before this fast path existed.
+const fn is_plain(byte: u8) -> bool {
+    !matches!(byte, ESC | C1_CSI | C1_OSC) && utf8_width(byte).is_none()
 }
 
 /// The index from which the tail of `bytes` must be HELD BACK into the next chunk.
@@ -294,7 +315,69 @@ fn complete_csi_end(bytes: &[u8], body: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{holdback_start, strip};
+    use super::{copy_codepoint, holdback_start, sequence_end, strip, utf8_width};
+
+    /// The loop `strip` ran before the plain-run fast path: one byte at a time, no slice copy.
+    /// Kept as the oracle the fast path is measured against — over a byte soup that mixes runs,
+    /// every introducer, truncated leads and private-use glyphs, the two must agree byte for byte.
+    fn strip_one_byte_at_a_time(bytes: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut index = 0;
+        while index < bytes.len() {
+            let byte = bytes[index];
+            if let Some(width) = utf8_width(byte) {
+                let end = bytes.len().min(index + width);
+                copy_codepoint(&mut out, &bytes[index..end]);
+                index = end;
+                continue;
+            }
+            if let Some(end) = sequence_end(bytes, index) {
+                index = end;
+            } else {
+                out.push(byte);
+                index += 1;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_plain_run_fast_path_matches_the_byte_loop_over_a_byte_soup() {
+        // A deterministic generator, so a failure names its seed rather than a moment.
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let alphabet: [&[u8]; 12] = [
+            b"plain text ",
+            b"\x1b[31m",
+            b"\x1b]0;title\x07",
+            b"\x9b1;2H",
+            b"\x9dmalformed",
+            b"\x1b(B",
+            b"\xe6\xbc\xa2",
+            b"\xee\x80\x80",
+            b"\xc2",
+            b"\x80\xff",
+            b"\r\n\t\x07",
+            b"\x1b",
+        ];
+        for round in 0..256_u32 {
+            let mut soup = Vec::new();
+            for _ in 0..64 {
+                let pick = usize::try_from(next() % 12).unwrap_or_default();
+                soup.extend_from_slice(alphabet[pick]);
+            }
+            assert_eq!(
+                strip(&soup),
+                strip_one_byte_at_a_time(&soup),
+                "round {round}: {soup:?}"
+            );
+        }
+    }
 
     /// The stripped text of an input written the way a terminal writes it. Empty for an answer that
     /// is not whole UTF-8, which is a failure the assertions report rather than a panic.

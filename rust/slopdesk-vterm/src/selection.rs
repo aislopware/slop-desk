@@ -471,22 +471,6 @@ impl VtSession {
         Ok(selection.is_some())
     }
 
-    /// Selects the OUTPUT of the command under `point` — one block's body.
-    ///
-    /// This is the door `slopdesk_termrender::block` was written for: a block's "copy output"
-    /// affordance asks for exactly the rows the engine's own semantic marks bound, so the block
-    /// list and the clipboard cannot disagree about where a command's output ended.
-    ///
-    /// # Errors
-    /// The engine's own error.
-    pub fn select_output_at(&mut self, point: SurfacePoint) -> Result<bool> {
-        let coord = cell_at(point, self.surface_geometry(), self.cols, self.rows);
-        let grid_ref = self.terminal.grid_ref(Point::Viewport(coord))?;
-        let selection = self.terminal.select_output(grid_ref)?;
-        self.terminal.set_selection(selection.as_ref())?;
-        Ok(selection.is_some())
-    }
-
     /// The selected text, or `None` when nothing is selected.
     ///
     /// `unwrap` is always on: a line the terminal soft-wrapped at column 80 is ONE line as far as

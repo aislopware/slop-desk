@@ -23,7 +23,7 @@
 //! Re-matching the whole accumulation per chunk is the shape this replaced: quadratic over a chatty
 //! command, and visibly laggy in the pane.
 
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use slopdesk_sanitize::plaintext::{holdback_start, strip};
 
 /// Raw-byte budget for the held-back tail. Real terminal escapes are far shorter.
@@ -57,17 +57,30 @@ impl Scanner {
     /// A scanner for `pattern`, or `None` when the pattern does not compile — which the caller
     /// reports as an error rather than dropping, because unlike a find field being typed into, this
     /// pattern arrived whole and a caller that mistyped it would otherwise block until its timeout.
+    ///
+    /// `^` and `$` bind to LINE boundaries (multi-line mode, with `\r`, `\n` and `\r\n` all
+    /// counting as one, because a PTY ends its lines in `\r\n` and a progress bar overwrites with
+    /// a bare `\r`). The match runs over a rolling window rather than the whole stream, so an
+    /// anchor bound to the window's edges would fire wherever the overlap trim happened to cut —
+    /// a `^BUILD COMPLETE` that never appears at a line start would still match mid-line the
+    /// moment the trim landed in front of it. `^` also matches at the very start of the window,
+    /// which after a trim may be mid-line; that is the one place the window's edge still shows.
     #[must_use]
     pub fn new(pattern: &str, buffer_cap: usize) -> Option<Self> {
-        Regex::new(pattern).ok().map(|regex| {
-            Self {
-                regex,
-                buffer_cap,
-                carry: Vec::new(),
-                recent: String::new(),
-                stripped: Vec::new(),
-            }
-        })
+        RegexBuilder::new(pattern)
+            .multi_line(true)
+            .crlf(true)
+            .build()
+            .ok()
+            .map(|regex| {
+                Self {
+                    regex,
+                    buffer_cap,
+                    carry: Vec::new(),
+                    recent: String::new(),
+                    stripped: Vec::new(),
+                }
+            })
     }
 
     /// Feeds one raw PTY chunk. `true` when the pattern matched in the window this chunk completed;
@@ -176,13 +189,53 @@ mod tests {
     #[test]
     fn the_accumulator_honours_its_cap_and_keeps_the_newest_half() {
         let mut scan = Scanner::new("NEVER MATCHES ANYTHING", 1024).expect("compiles");
-        for _ in 0..64 {
-            assert!(!scan.ingest(&[b'a'; 64]));
+        // Every chunk is a different printable byte, so what survives the trim says WHICH end
+        // was kept — identical chunks would pass with the oldest half retained.
+        let mut fed = Vec::new();
+        for chunk in 0..64_u8 {
+            let bytes = [b'!' + chunk; 64];
+            fed.extend_from_slice(&bytes);
+            assert!(!scan.ingest(&bytes));
         }
-        assert!(scan.stripped().len() <= 1024, "the cap holds");
+        let kept = scan.stripped();
+        assert!(kept.len() <= 1024, "the cap holds");
+        assert!(kept.len() >= 512, "the trim keeps the newest half, not nothing");
+        assert!(fed.ends_with(kept), "what survives is the TAIL of what was fed");
+        assert_eq!(kept.last(), Some(&(b'!' + 63)), "the newest chunk is intact");
+        assert_ne!(kept.first(), Some(&b'!'), "the oldest chunk is gone");
+    }
+
+    #[test]
+    fn a_line_anchor_binds_to_the_line_not_the_window() {
+        let mut scan = scanner("^BUILD COMPLETE");
+        assert!(!scan.ingest(b"earlier output\r\n"));
         assert!(
-            !scan.stripped().is_empty(),
-            "the trim keeps the newest half, not nothing"
+            scan.ingest(b"BUILD COMPLETE\r\n"),
+            "a line start after earlier output"
+        );
+
+        let mut mid = scanner("^BUILD COMPLETE");
+        assert!(
+            !mid.ingest(b"earlier BUILD COMPLETE\r\n"),
+            "mid-line is not a line start"
+        );
+        assert!(!mid.ingest(b"still not: BUILD COMPLETE\n"));
+
+        let mut split = scanner("^BUILD COMPLETE$");
+        assert!(!split.ingest(b"earlier\nBUILD COM"));
+        assert!(
+            split.ingest(b"PLETE\r\nnext line"),
+            "an anchored marker split across chunks"
+        );
+
+        let mut bar = scanner("^100%");
+        assert!(
+            !bar.ingest(b"progress 50%\rprogress 100%\r\n"),
+            "overwritten text is still mid-line"
+        );
+        assert!(
+            bar.ingest(b"progress 99%\r100% done\r\n"),
+            "a bare CR overwrite starts a line"
         );
     }
 

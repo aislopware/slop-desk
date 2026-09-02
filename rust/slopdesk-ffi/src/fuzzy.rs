@@ -21,7 +21,7 @@ use crate::{borrow, deliver};
 /// Both strings are read as UTF-8, lossily — a candidate is a pane title, a path or a command line
 /// that a foreign program wrote, and a search field is never the place to refuse one.
 ///
-/// Returns 0 when the candidate does not carry the query's characters in order. An empty or
+/// Returns 0 without a match in order, or past `slopdesk_fuzzy::MAX_CANDIDATE_SCALARS`. An empty or
 /// whitespace-only query matches everything with score 0 and no positions (4 bytes), which is what
 /// keeps a search field's zero state in its source order.
 ///

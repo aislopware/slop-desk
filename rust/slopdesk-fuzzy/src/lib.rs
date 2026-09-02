@@ -50,6 +50,21 @@ const BONUS_BOUNDARY_DELIMITER: i32 = BONUS_BOUNDARY + 1;
 /// The default scheme's delimiters — a match right after one earns [`BONUS_BOUNDARY_DELIMITER`].
 const DELIMITERS: [char; 5] = ['/', ',', ':', ';', '|'];
 
+/// The most scalars a candidate may hold and still be matched — the anti-hang bound on the INPUT.
+///
+/// The same law as `slopdesk_terminal::link::MAX_SCAN_COLUMNS`, which `slopdesk-rowscan` bounds
+/// its row scans with, at the same number. The DP below is a `candidate × pattern` rectangle
+/// allocated twice per call, and a candidate is a pane title, a path or a command line that a
+/// FOREIGN program wrote — the FFI hands the length straight through. Past this a candidate is
+/// refused (`None`, as if it did not match) rather than sized: a title no search field could show
+/// in full is not one worth a megabyte of matrix per keystroke. An empty query is exempt, because
+/// it allocates nothing and the zero-state list must still hold every title.
+pub const MAX_CANDIDATE_SCALARS: usize = 4096;
+
+/// The most scalars a query (or one extended-search term) may hold — the other side of the
+/// rectangle. A search field never holds this much; a pasted blob is refused, not matched.
+pub const MAX_PATTERN_SCALARS: usize = 256;
+
 /// A successful match: the fzf score (higher ranks first) and the matched positions, ascending,
 /// as offsets into the candidate's Unicode scalars.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +203,11 @@ fn run(query: &str, candidate: &str, with_pos: bool) -> Option<Match> {
             positions: Vec::new(),
         });
     }
+    // Refused before either side is collected: the collect is the first allocation the length
+    // would size.
+    if !fits(trimmed, MAX_PATTERN_SCALARS) || !fits(candidate, MAX_CANDIDATE_SCALARS) {
+        return None;
+    }
     let case_sensitive = trimmed.chars().any(|c| matches!(class_of(c), CharClass::Upper));
     let pattern: Vec<char> = if case_sensitive {
         trimmed.chars().collect()
@@ -196,6 +216,12 @@ fn run(query: &str, candidate: &str, with_pos: bool) -> Option<Match> {
     };
     let text: Vec<char> = candidate.chars().collect();
     matched(&pattern, &text, case_sensitive, with_pos)
+}
+
+/// Whether `text` holds at most `cap` scalars, decided in at most `cap + 1` steps rather than a
+/// count of the whole — the text is the untrusted side.
+pub(crate) fn fits(text: &str, cap: usize) -> bool {
+    text.chars().nth(cap).is_none()
 }
 
 /// The core matcher. `pattern` MUST be pre-lowercased when `case_sensitive` is false; the text is
@@ -214,6 +240,10 @@ fn matched(pattern: &[char], input: &[char], case_sensitive: bool, with_pos: boo
         });
     }
     if pattern_count > input.len() {
+        return None;
+    }
+    // The one door every matcher goes through, so a pre-collected caller is bounded the same way.
+    if pattern_count > MAX_PATTERN_SCALARS || input.len() > MAX_CANDIDATE_SCALARS {
         return None;
     }
     let scan = row_zero(pattern, input, case_sensitive)?;
@@ -490,6 +520,38 @@ mod tests {
 
     fn s(query: &str, candidate: &str) -> Option<i32> {
         score(query, candidate).map(|m| m.score)
+    }
+
+    #[test]
+    fn a_candidate_or_pattern_past_its_cap_is_refused_not_sized() {
+        let at_cap = format!("{}b", "a".repeat(MAX_CANDIDATE_SCALARS - 1));
+        assert!(s("ab", &at_cap).is_some(), "exactly the cap still matches");
+        let over = format!("{at_cap}c");
+        assert_eq!(s("ab", &over), None, "one past the cap is refused");
+        assert_eq!(
+            s("", &over),
+            Some(0),
+            "the empty query allocates nothing and keeps the list whole"
+        );
+
+        let long_query = "a".repeat(MAX_PATTERN_SCALARS + 1);
+        let host = "a".repeat(MAX_PATTERN_SCALARS + 8);
+        assert_eq!(s(&long_query, &host), None, "a pasted blob of a query is refused");
+        assert!(s(&"a".repeat(MAX_PATTERN_SCALARS), &host).is_some());
+
+        let text: Vec<char> = over.chars().collect();
+        assert_eq!(
+            match_pattern(&['a', 'b'], &text, false),
+            None,
+            "the pre-collected door is bounded too"
+        );
+        let pattern = Pattern::parse("ab 'c");
+        assert_eq!(pattern.rank(&over), None, "and so is every extended-search term");
+        assert!(
+            pattern
+                .rank(&format!("{}bc", "a".repeat(MAX_CANDIDATE_SCALARS - 2)))
+                .is_some()
+        );
     }
 
     // The single-character score is `SCORE_MATCH + positionBonus * BONUS_FIRST_CHAR_MULTIPLIER`,

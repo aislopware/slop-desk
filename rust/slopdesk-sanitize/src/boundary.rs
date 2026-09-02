@@ -127,7 +127,10 @@ pub fn split_trailing_incomplete_utf8(bytes: &[u8]) -> (&[u8], &[u8]) {
     }
     let lead = window.get(window.len() - continuations - 1).copied().unwrap_or(0);
     let expected = match lead {
-        0xC0..=0xDF => 1,
+        // `0xC0`/`0xC1` are the overlong leads and never start a valid scalar, so a trailing one
+        // is invalid bytes to pass through now, not a codepoint to wait for — the same range
+        // `plaintext::utf8_width` reads.
+        0xC2..=0xDF => 1,
         0xE0..=0xEF => 2,
         0xF0..=0xF7 => 3,
         // ASCII is already complete; anything else is a stray continuation byte or an invalid lead,
@@ -278,6 +281,10 @@ mod tests {
         assert!(split_trailing_incomplete_utf8(b"a\x80").1.is_empty());
         assert!(split_trailing_incomplete_utf8(b"\x80\x80\x80\x80").1.is_empty());
         assert!(split_trailing_incomplete_utf8(b"a\xf8").1.is_empty());
+        // The overlong leads: no continuation could make them a scalar, so they are not held.
+        assert!(split_trailing_incomplete_utf8(b"a\xc0").1.is_empty());
+        assert!(split_trailing_incomplete_utf8(b"a\xc1").1.is_empty());
+        assert_eq!(split_trailing_incomplete_utf8(b"a\xc2").1, b"\xc2");
     }
 
     #[test]

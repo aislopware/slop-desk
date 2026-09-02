@@ -128,11 +128,15 @@ pub struct Preedit<'t> {
 
 /// The reusable scratch a paint pass needs.
 ///
-/// Held across frames so a repaint allocates nothing: the shaped-glyph buffer is the only
-/// per-run allocation in the pass, and it is cleared rather than dropped.
+/// Held across frames so a repaint allocates nothing: the shaped-glyph buffer and the two run
+/// lists are the only per-row allocations in the pass, and each is cleared rather than dropped.
 #[derive(Debug, Default)]
 pub struct Painter {
     shaped: Vec<ShapedGlyph>,
+    /// The background pass's coalesced runs for the row being painted.
+    background_runs: Vec<(BackgroundKey, ColumnSpan)>,
+    /// The decoration pass's coalesced runs for the row being painted.
+    decoration_runs: Vec<(DecorationKey, ColumnSpan)>,
 }
 
 /// What a background run groups by.
@@ -348,12 +352,32 @@ impl Painter {
             .cursor
             .filter(|cursor| cursor.y == row_index && style.focused && cursor_visible(*cursor, style))
             .and_then(|cursor| {
+                // The column comes back from the layout rather than being `cursor.x` re-read
+                // here: on a wide tail the rect is drawn one cell left, and the glyph inverted
+                // must be the one under that rect.
                 let placed = geometry.cursor(top, cursor, style.focused);
-                placed.inverts_glyph.then_some(cursor.x)
+                placed.inverts_glyph.then_some(placed.col)
             });
 
-        background_pass(row, top, geometry, frame, style, &selected, out);
-        decoration_pass(row, top, geometry, style, &selected, out);
+        background_pass(
+            row,
+            top,
+            geometry,
+            frame,
+            style,
+            &selected,
+            &mut self.background_runs,
+            out,
+        );
+        decoration_pass(
+            row,
+            top,
+            geometry,
+            style,
+            &selected,
+            &mut self.decoration_runs,
+            out,
+        );
         self.text_pass(
             row,
             row_index,
@@ -372,6 +396,11 @@ impl Painter {
 }
 
 /// Coalesces adjacent cells with the same background into one rect.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a paint pass needs the frame, the row, its place, the style, its scratch and the sink; \
+              bundling them into a struct would move the argument list rather than shorten it"
+)]
 fn background_pass(
     row: &FrameRow,
     top: f64,
@@ -379,10 +408,11 @@ fn background_pass(
     frame: &Frame,
     style: &PaintStyle,
     selected: &impl Fn(u16) -> bool,
+    runs: &mut Vec<(BackgroundKey, ColumnSpan)>,
     out: &mut DrawList,
 ) {
     let default: Rgba = frame.colors.background.into();
-    run_over_row(row, |col, cell| {
+    run_over_row(row, runs, |col, cell| {
         let color = if selected(col) {
             style.selection.background
         } else {
@@ -396,8 +426,8 @@ fn background_pass(
         } else {
             BackgroundKey { color }
         }
-    })
-    .for_each(|(key, cols)| {
+    });
+    for &(key, cols) in runs.iter() {
         let bounds = geometry.span(top, cols);
         out.push_background(RectInstance {
             x: px(bounds.x),
@@ -407,7 +437,7 @@ fn background_pass(
             color: key.color,
             style: RectStyle::Solid,
         });
-    });
+    }
 }
 
 /// Coalesces adjacent cells with the same decorations, blanks and wide tails included.
@@ -417,9 +447,10 @@ fn decoration_pass(
     geometry: &CellGeometry,
     style: &PaintStyle,
     selected: &impl Fn(u16) -> bool,
+    runs: &mut Vec<(DecorationKey, ColumnSpan)>,
     out: &mut DrawList,
 ) {
-    run_over_row(row, |col, cell| {
+    run_over_row(row, runs, |col, cell| {
         let color = selected(col)
             .then_some(style.selection.foreground)
             .flatten()
@@ -431,10 +462,10 @@ fn decoration_pass(
             overline: cell.flags.contains(CellFlags::OVERLINE),
             color,
         }
-    })
-    .for_each(|(key, cols)| {
+    });
+    for &(key, cols) in runs.iter() {
         if key.draws_nothing() {
-            return;
+            continue;
         }
         let underline = geometry.underline(top, cols, key.underline);
         for line in [underline.first, underline.second].into_iter().flatten() {
@@ -454,7 +485,7 @@ fn decoration_pass(
                 RectStyle::Solid,
             ));
         }
-    });
+    }
 }
 
 impl Painter {
@@ -878,16 +909,20 @@ const fn rect_instance(bounds: Rect, color: Rgba, style: RectStyle) -> RectInsta
     }
 }
 
-/// Walks a row, coalescing adjacent cells whose `key` matches into one span.
+/// Walks a row, coalescing adjacent cells whose `key` matches into one span, into `runs`.
 ///
 /// The one loop shape all three passes share. Each pass supplies what it groups by, and none of
 /// them re-implements the run-breaking — which is where an off-by-one would show as a missing
 /// column at a colour change, the kind of bug that survives a screenshot.
+///
+/// `runs` is the caller's scratch, cleared and refilled rather than returned: a row is walked
+/// twice per frame, sixty times a second, and [`Painter`] promises a repaint allocates nothing.
 fn run_over_row<K: PartialEq + Copy>(
     row: &FrameRow,
+    runs: &mut Vec<(K, ColumnSpan)>,
     key: impl Fn(u16, FrameCell) -> K,
-) -> impl Iterator<Item = (K, ColumnSpan)> {
-    let mut runs = Vec::new();
+) {
+    runs.clear();
     let mut open: Option<(K, u16)> = None;
     for (index, cell) in row.cells.iter().enumerate() {
         let col = u16::try_from(index).unwrap_or(u16::MAX);
@@ -905,7 +940,6 @@ fn run_over_row<K: PartialEq + Copy>(
         let end = u16::try_from(row.cells.len()).unwrap_or(u16::MAX);
         runs.push((held, ColumnSpan { start, end }));
     }
-    runs.into_iter()
 }
 
 #[cfg(test)]
@@ -1812,5 +1846,106 @@ mod tests {
         let (first, _) = paint(&frame, &style());
         let (second, _) = paint(&frame, &style());
         assert_eq!(first.len(), second.len());
+    }
+
+    #[test]
+    fn a_repaint_through_one_painter_reuses_its_scratch_and_draws_the_same() {
+        // Colour changes and decorations every other cell, so each pass coalesces several runs
+        // and the scratch has something to hold between frames.
+        let frame = frame_of("abcdefgh", |cell| {
+            cell.bg = Rgb::new(10, 20, 30);
+            cell.underline = UnderlineStyle::Single;
+        });
+        let spans = segment(&frame, LayoutMode::Grid);
+        let layout = lay_out(&spans, &[], Chrome::NONE, 20.0, Viewport {
+            scroll_y: 0.0,
+            height: 400.0,
+            width: 400.0,
+        });
+        let mut painter = Painter::new();
+        let mut shaper = OneToOne::default();
+        let mut cache = crate::glyph::GlyphCache::new();
+        let mut first = DrawList::new();
+        painter.paint(
+            &frame,
+            &layout,
+            &style(),
+            None,
+            &mut cache,
+            &mut shaper,
+            &mut Square,
+            &mut first,
+        );
+        let capacities = (
+            painter.shaped.capacity(),
+            painter.background_runs.capacity(),
+            painter.decoration_runs.capacity(),
+        );
+        assert!(
+            capacities.1 > 0 && capacities.2 > 0,
+            "the passes ran through the scratch"
+        );
+
+        let mut second = DrawList::new();
+        painter.paint(
+            &frame,
+            &layout,
+            &style(),
+            None,
+            &mut cache,
+            &mut shaper,
+            &mut Square,
+            &mut second,
+        );
+        assert_eq!(first.backgrounds, second.backgrounds);
+        assert_eq!(first.overlays, second.overlays);
+        assert_eq!(first.glyphs, second.glyphs);
+        assert_eq!(
+            capacities,
+            (
+                painter.shaped.capacity(),
+                painter.background_runs.capacity(),
+                painter.decoration_runs.capacity()
+            ),
+            "the second frame grew no buffer"
+        );
+    }
+
+    #[test]
+    fn a_block_cursor_on_a_wide_tail_inverts_the_heads_glyph() {
+        // The engine parks the caret on the tail cell; the rect moves to the head, and so must
+        // the glyph it inverts — inverting the tail inverts nothing, since a tail shapes nothing.
+        let mut frame = frame_of("漢-x", |_| {});
+        frame.rows[0].cells[0].flags = CellFlags::WIDE;
+        frame.rows[0].cells[1].flags = CellFlags::WIDE_TAIL;
+        frame.cursor = Some(FrameCursor {
+            x: 1,
+            y: 0,
+            shape: CursorShape::Block,
+            color: Rgb::WHITE,
+            blinking: false,
+            at_wide_tail: true,
+            password_input: false,
+        });
+        let magenta = Rgba {
+            r: 0xFF,
+            g: 0x00,
+            b: 0xFF,
+            a: 0xFF,
+        };
+        let (list, _) = paint(&frame, &PaintStyle {
+            cursor_text: Some(magenta),
+            ..style()
+        });
+        let inverted: Vec<&crate::quad::GlyphInstance> = list
+            .glyphs
+            .iter()
+            .filter(|glyph| glyph.color == magenta)
+            .collect();
+        assert_eq!(inverted.len(), 1, "exactly the glyph under the caret's rect");
+        assert!(
+            f64::from(inverted[0].x) < 10.0,
+            "the head's glyph at column 0, not the tail's column"
+        );
     }
 }

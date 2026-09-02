@@ -22,6 +22,10 @@ pub const ESC: u8 = 0x1B;
 pub const BEL: u8 = 0x07;
 /// The 8-bit `ST`, which only a true 8-bit stream carries — in UTF-8 this byte is a continuation.
 pub const C1_ST: u8 = 0x9C;
+/// `CAN`, which aborts any escape or control string mid-body (VT500, and ghostty follows it).
+pub const CAN: u8 = 0x18;
+/// `SUB`, which aborts a string body exactly as `CAN` does.
+pub const SUB: u8 = 0x1A;
 /// Carriage return.
 pub const CR: u8 = 0x0D;
 /// Line feed.
@@ -77,17 +81,19 @@ pub fn parse_csi(bytes: &[u8], start: usize) -> Option<Csi<'_>> {
 pub struct StringSequence {
     /// Index just past the last body byte (exclusive of the terminator).
     pub body_end: usize,
-    /// Index just past the terminator.
+    /// Index just past the terminator — or AT the `CAN`/`SUB` that aborted the body, which is left
+    /// for the outer scanner to read as the plain C0 byte it is.
     pub seq_end: usize,
 }
 
 /// Which bytes end a string sequence, for a caller that has a reason to differ.
 ///
-/// `ESC \\` always terminates. The rest is a policy, and two callers want opposite things for the
-/// same right reason. A replay-hygiene pass reads a stream it may have cut mid-sequence, so an
-/// unterminated body is a HEAD-CUT ARTIFACT it passes through verbatim rather than guessing at. A
-/// pass that renders text for matching has no next chunk to wait for, so it must treat a malformed
-/// body as ended rather than swallow the rest of the output.
+/// `ESC \\` always terminates, and `CAN`/`SUB` always abort (see [`string_sequence_end`]). The rest
+/// is a policy, and two callers want opposite things for the same right reason. A replay-hygiene
+/// pass reads a stream it may have cut mid-sequence, so an unterminated body is a HEAD-CUT
+/// ARTIFACT it passes through verbatim rather than guessing at. A pass that renders text for
+/// matching has no next chunk to wait for, so it must treat a malformed body as ended rather than
+/// swallow the rest of the output.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Terminators {
     /// Whether `BEL` ends the body. True for `OSC`, false for `DCS`/`SOS`/`PM`/`APC`.
@@ -148,6 +154,11 @@ impl Terminators {
 /// `None` when the buffer ends before any terminator in the policy — which for a replay pass is a
 /// head-cut artifact rather than a decision, and for a lenient caller cannot happen unless the body
 /// runs to the very end of the buffer.
+///
+/// `CAN` and `SUB` abort the body under EVERY policy, as the VT500 state machine has them do: the
+/// terminal the stream is replayed into stops reading the string there, so a scanner that kept
+/// going would hand a `;rgb:…` reply back as text and the terminal would not. The aborting byte is
+/// not consumed — `seq_end == body_end` — so the outer scanner sees it as a plain C0.
 #[must_use]
 pub fn string_sequence_end(
     bytes: &[u8],
@@ -157,6 +168,12 @@ pub fn string_sequence_end(
     let mut j = body_start;
     while j < bytes.len() {
         let byte = bytes[j];
+        if byte == CAN || byte == SUB {
+            return Some(StringSequence {
+                body_end: j,
+                seq_end: j,
+            });
+        }
         if (terminators.bel && byte == BEL) || (terminators.c1_st && byte == C1_ST) {
             return Some(StringSequence {
                 body_end: j,
@@ -288,6 +305,19 @@ mod tests {
         // In a DCS the BEL is an ordinary body byte.
         let dcs = string_sequence_end(b"\x1bP+q\x07more\x1b\\", 2, Terminators::st_only()).expect("st only");
         assert_eq!(dcs.seq_end, 11);
+    }
+
+    #[test]
+    fn can_and_sub_abort_a_string_body_under_every_policy_without_being_consumed() {
+        let reply = b"\x1b]11\x18;rgb:1111/2222/3333\x07";
+        for policy in [Terminators::osc(), Terminators::st_only(), Terminators::lenient()] {
+            let aborted = string_sequence_end(reply, 2, policy).expect("CAN aborts");
+            assert_eq!(aborted.body_end, 4, "the body stops at the CAN");
+            assert_eq!(aborted.seq_end, 4, "the CAN is left for the outer scanner");
+        }
+        let sub =
+            string_sequence_end(b"\x1bP+q\x1amore\x1b\\", 2, Terminators::st_only()).expect("SUB aborts");
+        assert_eq!((sub.body_end, sub.seq_end), (4, 4));
     }
 
     #[test]

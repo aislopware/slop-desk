@@ -38,8 +38,6 @@
 
 use regex::{Regex, RegexBuilder};
 
-use crate::frame::{CellFlags, Frame, FrameRow};
-
 /// A cell's position in the grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CellPos {
@@ -153,27 +151,6 @@ impl LogicalLine {
         self.cells.clear();
     }
 
-    /// Appends one row's cells, blanks included.
-    ///
-    /// A blank cell contributes a single space rather than nothing: a search for `foo bar` must
-    /// find text laid out with a literal gap, and dropping blanks would join words that the user
-    /// can plainly see are apart.
-    fn push_row(&mut self, row: &FrameRow, y: u16) {
-        for (x, cell) in row.cells.iter().enumerate() {
-            if cell.flags.contains(CellFlags::WIDE_TAIL) || cell.flags.contains(CellFlags::WIDE_HEAD) {
-                continue;
-            }
-            let text = row.cell_text(*cell);
-            let text = if text.is_empty() { " " } else { text };
-            self.starts.push(self.text.len());
-            self.cells.push(CellPos {
-                row: y,
-                col: u16::try_from(x).unwrap_or(u16::MAX),
-            });
-            self.text.push_str(text);
-        }
-    }
-
     /// The text to actually match against, folded when the query is insensitive.
     ///
     /// Folding is skipped entirely for a case-sensitive query, and the needle is folded once by the
@@ -228,43 +205,6 @@ impl LogicalLine {
             .and_then(|suffix| suffix.chars().next())
             .is_some_and(is_word)
     }
-}
-
-/// Every hit of `query` in `rows`, in reading order.
-///
-/// `rows` is a contiguous run of grid rows — a viewport, or a scrollback window the caller
-/// assembled. Positions in the result are indices into `rows`, so a caller searching scrollback
-/// adds its own offset.
-#[must_use]
-pub fn search_rows(rows: &[FrameRow], query: &SearchQuery<'_>) -> Vec<Match> {
-    let Some(matcher) = Matcher::new(query) else {
-        return Vec::new();
-    };
-
-    let mut hits = Vec::new();
-    let mut line = LogicalLine::default();
-    let mut start = 0_usize;
-
-    while start < rows.len() {
-        line.clear();
-        let mut end = start;
-        while let Some(row) = rows.get(end) {
-            line.push_row(row, u16::try_from(end).unwrap_or(u16::MAX));
-            end += 1;
-            if !row.wrapped {
-                break;
-            }
-        }
-        collect(&mut line, &matcher, &mut hits);
-        start = end.max(start + 1);
-    }
-    hits
-}
-
-/// Every hit in a whole frame's viewport.
-#[must_use]
-pub fn search_frame(frame: &Frame, query: &SearchQuery<'_>) -> Vec<Match> {
-    search_rows(&frame.rows, query)
 }
 
 /// A [`SearchQuery`] compiled once, ready to run over line after line.
@@ -358,13 +298,13 @@ impl Matcher {
     }
 }
 
-/// A logical line assembled cell by cell by a caller that has no [`Frame`].
+/// A logical line assembled cell by cell by a caller that has no [`crate::frame::Frame`].
 ///
 /// The scrollback is never rendered, so its rows have no [`FrameRow`] to search — but the wrap
 /// handling, the byte-to-cell index and the whole-word rule are the same problem there as here, and
 /// solving it twice is how the two answers drift. A caller walking the engine's grid feeds cells in
-/// reading order through [`Self::push_cell`] and hands the result to [`search_line`]; the matcher
-/// underneath is the one [`search_rows`] uses.
+/// reading order through [`Self::push_cell`] and hands the result to [`search_line`]; there is no
+/// second walker over rendered rows — the screen's own [`crate::screen`] search is the one caller.
 ///
 /// The scan is reused across lines — [`Self::clear`] keeps the buffers — because a whole-buffer
 /// search touches thousands of lines and each would otherwise re-allocate.
@@ -409,7 +349,7 @@ impl LineScan {
 ///
 /// Positions come back in whatever row space the caller pushed. [`CellPos::row`] is a `u16`, so a
 /// scrollback walker pushes each row's offset WITHIN the line — at most a screenful — and adds the
-/// line's own first row on the way out, exactly as [`search_rows`] documents for a row window.
+/// line's own first row on the way out.
 ///
 /// A [`Matcher`] rather than a [`SearchQuery`] because this is the per-LINE call: the buffer walker
 /// that drives it holds thousands of lines and one query.
@@ -481,8 +421,43 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
-    use super::{CellPos, SearchQuery, search_rows};
+    use super::{CellPos, LineScan, Match, Matcher, SearchQuery, search_line};
     use crate::frame::{CellFlags, FrameCell, FrameRow};
+
+    /// Every hit of `query` in `rows`, joined across soft wraps the way the screen walker joins
+    /// them: one [`LineScan`] per logical line, fed cell by cell with the wide tails skipped, then
+    /// [`search_line`]. The rows are the fixture; the API under test is the one `screen.rs` calls.
+    fn search_rows(rows: &[FrameRow], query: &SearchQuery<'_>) -> Vec<Match> {
+        let Some(matcher) = Matcher::new(query) else {
+            return Vec::new();
+        };
+        let mut hits = Vec::new();
+        let mut scan = LineScan::new();
+        let mut start = 0_usize;
+        while start < rows.len() {
+            scan.clear();
+            let mut end = start;
+            while let Some(row) = rows.get(end) {
+                for (x, cell) in row.cells.iter().enumerate() {
+                    if cell.flags.contains(CellFlags::WIDE_TAIL) || cell.flags.contains(CellFlags::WIDE_HEAD)
+                    {
+                        continue;
+                    }
+                    scan.push_cell(row.cell_text(*cell), CellPos {
+                        row: u16::try_from(end).unwrap_or(u16::MAX),
+                        col: u16::try_from(x).unwrap_or(u16::MAX),
+                    });
+                }
+                end += 1;
+                if !row.wrapped {
+                    break;
+                }
+            }
+            hits.extend(search_line(&mut scan, &matcher));
+            start = end.max(start + 1);
+        }
+        hits
+    }
 
     /// A row whose cells are one character each, as an ASCII line would be.
     fn row(text: &str, wrapped: bool) -> FrameRow {

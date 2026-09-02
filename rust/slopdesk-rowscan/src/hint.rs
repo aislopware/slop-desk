@@ -235,6 +235,13 @@ fn add_matches(
     accepted: &mut Vec<Target>,
     build: &mut dyn FnMut(&regex::Match<'_>) -> Option<TargetKind>,
 ) {
+    // The column of a match is the width of everything before it, kept as a running sum over the
+    // gap since the previous match rather than re-measured from the row's start — `find_iter`
+    // yields in order, so measuring the prefix each time is quadratic in a row of many hits. The
+    // sum equals the prefix width because a match edge falls on a cluster edge, which every hint
+    // pattern's boundary guarantees (`find::regex_matches` keeps the same running count).
+    let mut counted_bytes = 0_usize;
+    let mut counted_cells = 0_usize;
     for matched in regex.find_iter(bounded) {
         if accepted.len() >= MAX_MATCHES_PER_ROW {
             break;
@@ -242,7 +249,11 @@ fn add_matches(
         if matched.is_empty() {
             continue;
         }
-        let col_start = text_cells(bounded.get(..matched.start()).unwrap_or(""));
+        counted_cells = counted_cells.saturating_add(text_cells(
+            bounded.get(counted_bytes..matched.start()).unwrap_or(""),
+        ));
+        counted_bytes = matched.start();
+        let col_start = counted_cells;
         let col_end = col_start.saturating_add(text_cells(matched.as_str()));
         if overlaps(accepted, col_start, col_end) {
             continue;
@@ -298,7 +309,7 @@ fn ipv4_regex() -> Option<Regex> {
 
 #[cfg(test)]
 mod tests {
-    use slopdesk_terminal::link::{LinkSchemePolicy, MAX_SCAN_COLUMNS};
+    use slopdesk_terminal::link::{LinkSchemePolicy, MAX_SCAN_COLUMNS, text_cells};
 
     use super::{Authored, Pattern, Target, TargetKind, targets};
 
@@ -354,6 +365,40 @@ mod tests {
         ));
         let found = scan(&["/var/log/192.168.1.42/app.log"], &[]);
         assert_eq!(found.len(), 1, "the address inside the path must not also light");
+    }
+
+    #[test]
+    fn a_row_of_many_hashes_gets_the_same_columns_as_measuring_each_prefix() {
+        // 512 hashes is the per-row match cap; a wide glyph in every gap makes the running sum
+        // and a naive prefix measure disagree if the sum ever loses a cluster.
+        let row = "中deadbee1 ".repeat(512);
+        let wide_enough = text_cells(&row) + 1;
+        let found = targets(
+            &[row.as_str()],
+            None,
+            &LinkSchemePolicy::All,
+            &[],
+            &[],
+            wide_enough,
+        );
+        let naive: Vec<(usize, usize)> = row
+            .match_indices("deadbee1")
+            .map(|(start, hash)| {
+                let col = text_cells(row.get(..start).unwrap_or(""));
+                (col, col + text_cells(hash))
+            })
+            .collect();
+        assert_eq!(found.len(), 512, "every hash is a target");
+        let scanned: Vec<(usize, usize)> = found
+            .iter()
+            .map(|target| (target.col_start, target.col_end))
+            .collect();
+        assert_eq!(scanned, naive);
+        assert_eq!(
+            scanned.first(),
+            Some(&(2, 10)),
+            "the first hash sits past one wide glyph"
+        );
     }
 
     #[test]

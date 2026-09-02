@@ -228,6 +228,16 @@ mod tests {
     }
 
     #[test]
+    fn a_can_inside_an_osc_reply_ends_the_body_and_the_rest_is_text() {
+        // The terminal stops reading the OSC at the CAN, so the `;rgb:…` after it is plain text
+        // that reaches the screen — a strip that swallowed it up to the BEL would disagree.
+        assert_eq!(
+            strip(b"\x1b]11\x18;rgb:1111/2222/3333\x07"),
+            b"\x18;rgb:1111/2222/3333\x07"
+        );
+    }
+
+    #[test]
     fn titles_marks_and_hyperlinks_survive() {
         for osc in [
             &b"\x1b]0;my title\x07"[..],

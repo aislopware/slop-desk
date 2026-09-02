@@ -296,7 +296,7 @@ pub fn lex(text: &str) -> Lexed {
     scan.run();
     let pass = resolve_words(&scan.atoms);
     Lexed {
-        spans: paint(text, &scan.atoms, &pass.roles, &pass.words),
+        spans: paint(text, &scan.atoms, &pass.word_of, &pass.words),
         words: pass.words,
         unterminated: scan.unterminated,
         marks: pass.marks,
@@ -562,9 +562,11 @@ struct WordPass {
     words: Vec<Word>,
     /// Role transitions — see [`Lexed::marks`].
     marks: Vec<(usize, WordRole)>,
-    /// Parallel to the atoms: which word role each atom belongs to, or `None` between words. It is
-    /// what lets [`paint`] colour a bare run without searching the word list.
-    roles: Vec<Option<WordRole>>,
+    /// Parallel to the atoms: the index into `words` of the word each atom belongs to, or `None`
+    /// between words. It is what lets [`paint`] colour a bare run — whose kind is judged over the
+    /// WHOLE word — without searching the word list, which over a pasted script is one search per
+    /// token through every word before it.
+    word_of: Vec<Option<usize>>,
     /// Whether the next word would be a command name.
     expect_command: bool,
     /// Whether the next word is a redirection's target.
@@ -578,7 +580,7 @@ impl WordPass {
         Self {
             words: Vec::new(),
             marks: vec![(0, WordRole::Command)],
-            roles: vec![None; atom_count],
+            word_of: vec![None; atom_count],
             expect_command: true,
             redirect_next: false,
             open: Vec::new(),
@@ -624,9 +626,10 @@ impl WordPass {
             .and_then(|index| atoms.get(*index))
             .map_or(start, |atom| atom.end);
         let role = self.role();
+        let word_index = self.words.len();
         for index in &self.open {
-            if let Some(slot) = self.roles.get_mut(*index) {
-                *slot = Some(role);
+            if let Some(slot) = self.word_of.get_mut(*index) {
+                *slot = Some(word_index);
             }
         }
         self.words.push(Word { start, end, role });
@@ -679,8 +682,8 @@ fn resolve_words(atoms: &[Atom]) -> WordPass {
     pass
 }
 
-/// Turns atoms plus word roles into the merged, ascending highlight spans.
-fn paint(text: &str, atoms: &[Atom], roles: &[Option<WordRole>], words: &[Word]) -> Vec<SyntaxSpan> {
+/// Turns atoms plus their word memberships into the merged, ascending highlight spans.
+fn paint(text: &str, atoms: &[Atom], word_of: &[Option<usize>], words: &[Word]) -> Vec<SyntaxSpan> {
     let mut spans: Vec<SyntaxSpan> = Vec::with_capacity(atoms.len());
     for (index, atom) in atoms.iter().enumerate() {
         let kind = match atom.kind {
@@ -691,11 +694,14 @@ fn paint(text: &str, atoms: &[Atom], roles: &[Option<WordRole>], words: &[Word])
             AtomKind::Redirection => TokenKind::Redirection,
             AtomKind::Comment => TokenKind::Comment,
             AtomKind::Bare => {
-                let role = roles.get(index).copied().flatten().unwrap_or_default();
-                let word = words
-                    .iter()
-                    .find(|word| word.start <= atom.start && word.end >= atom.end);
-                bare_kind(text, word.map_or(atom.start..atom.end, |word| word.range()), role)
+                let word = word_of
+                    .get(index)
+                    .copied()
+                    .flatten()
+                    .and_then(|at| words.get(at))
+                    .copied();
+                let role = word.map_or_else(WordRole::default, |word| word.role);
+                bare_kind(text, word.map_or(atom.start..atom.end, Word::range), role)
             },
         };
         // Merge into the run before it when they are the same kind and touch, so a renderer draws
@@ -745,7 +751,10 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
-    use super::{TokenKind, Unterminated, WordRole, lex};
+    use super::{
+        Atom, AtomKind, Scan, SyntaxSpan, TokenKind, Unterminated, Word, WordRole, bare_kind, lex, paint,
+        resolve_words,
+    };
 
     /// The spans as `(text, kind)` pairs, which is what a colour assertion actually cares about.
     fn painted(text: &str) -> Vec<(&str, TokenKind)> {
@@ -1009,6 +1018,68 @@ mod tests {
         let lexed = lex(&paste);
         assert_eq!(lexed.unterminated, Unterminated::Nothing);
         assert_eq!(lexed.words.len(), 2);
+    }
+
+    /// [`paint`] as it was before each atom knew its word: a search through the word list per bare
+    /// atom. Kept as the oracle the indexed lookup must agree with, span for span.
+    fn paint_by_searching_the_words(text: &str, atoms: &[Atom], words: &[Word]) -> Vec<SyntaxSpan> {
+        let mut spans: Vec<SyntaxSpan> = Vec::new();
+        for atom in atoms {
+            let kind = match atom.kind {
+                AtomKind::Space => continue,
+                AtomKind::Quoted => TokenKind::Quoted,
+                AtomKind::Variable => TokenKind::Variable,
+                AtomKind::SubstOpen | AtomKind::SubstClose | AtomKind::Operator => TokenKind::Operator,
+                AtomKind::Redirection => TokenKind::Redirection,
+                AtomKind::Comment => TokenKind::Comment,
+                AtomKind::Bare => {
+                    let word = words
+                        .iter()
+                        .find(|word| word.start <= atom.start && word.end >= atom.end);
+                    let role = word.map_or_else(WordRole::default, |word| word.role);
+                    bare_kind(text, word.map_or(atom.start..atom.end, |word| word.range()), role)
+                },
+            };
+            if let Some(last) = spans.last_mut()
+                && last.kind == kind
+                && last.end == atom.start
+            {
+                last.end = atom.end;
+                continue;
+            }
+            spans.push(SyntaxSpan {
+                start: atom.start,
+                end: atom.end,
+                kind,
+            });
+        }
+        spans
+    }
+
+    #[test]
+    fn a_twenty_thousand_token_paste_paints_the_same_spans_as_searching_the_words() {
+        // Every word shape the bare-kind judgement distinguishes, so a wrong word index would
+        // change a colour rather than hide behind a run of identical tokens.
+        let text = (0..2500)
+            .map(|n| format!("cmd{n} --flag{n} ~/p{n}/f \"q$X\"tail{n} arg{n} > out{n} | echo $V{n} ;"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut scan = Scan {
+            text: &text,
+            at: 0,
+            atoms: Vec::new(),
+            stack: Vec::new(),
+            pending: None,
+            unterminated: Unterminated::Nothing,
+            word_start: true,
+        };
+        scan.run();
+        let pass = resolve_words(&scan.atoms);
+        assert!(pass.words.len() >= 20_000, "{} words", pass.words.len());
+        let indexed = paint(&text, &scan.atoms, &pass.word_of, &pass.words);
+        let searched = paint_by_searching_the_words(&text, &scan.atoms, &pass.words);
+        assert_eq!(indexed, searched);
+        assert_eq!(lex(&text).spans, indexed);
     }
 
     #[test]

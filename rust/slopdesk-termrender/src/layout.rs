@@ -99,6 +99,10 @@ impl Underline {
 /// Where the cursor draws and what it does to the cell under it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Cursor {
+    /// The column the rect sits in — `cursor.x`, or one to its left when the caret was parked on
+    /// a wide glyph's tail. The painter reads the glyph to invert from HERE, so the inverted glyph
+    /// and the rect drawn over it can never disagree about which cell the caret covers.
+    pub col: u16,
     /// The rect to fill.
     pub rect: Rect,
     /// Which pipeline draws it.
@@ -259,6 +263,7 @@ impl CellGeometry {
 
         if !focused {
             return Cursor {
+                col,
                 rect: cell,
                 style: RectStyle::Hollow,
                 inverts_glyph: false,
@@ -268,6 +273,7 @@ impl CellGeometry {
         match cursor.shape {
             CursorShape::Bar => {
                 Cursor {
+                    col,
                     rect: Rect {
                         width: f64::min(thickness, cell.width),
                         ..cell
@@ -279,6 +285,7 @@ impl CellGeometry {
             CursorShape::Underline => {
                 let height = f64::min(thickness, cell.height);
                 Cursor {
+                    col,
                     rect: Rect {
                         y: cell.y + cell.height - height,
                         height,
@@ -290,6 +297,7 @@ impl CellGeometry {
             },
             CursorShape::Hollow => {
                 Cursor {
+                    col,
                     rect: cell,
                     style: RectStyle::Hollow,
                     inverts_glyph: false,
@@ -297,6 +305,7 @@ impl CellGeometry {
             },
             CursorShape::Block => {
                 Cursor {
+                    col,
                     rect: cell,
                     style: RectStyle::Solid,
                     inverts_glyph: true,
@@ -672,6 +681,12 @@ mod tests {
         let drawn = geometry.cursor(geometry.row_top(2), tail, true);
         assert!((drawn.rect.x - geometry.cell(geometry.row_top(2), 3).x).abs() < f64::EPSILON);
         assert!((drawn.rect.width - 2.0).abs() < f64::EPSILON);
+        assert_eq!(
+            drawn.col, 3,
+            "the column the painter inverts is the head's, not the tail's"
+        );
+        let head = geometry.cursor(geometry.row_top(2), cursor(CursorShape::Block), true);
+        assert_eq!(head.col, 4);
     }
 
     #[test]
